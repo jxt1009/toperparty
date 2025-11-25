@@ -6,7 +6,7 @@ services:
     container_name: signaling
     restart: unless-stopped
     ports:
-      - "3000:3000"  # internal only; nginx will proxy to this
+      - "4000:4000"  # internal only; nginx will proxy to this
     networks:
       - web
 
