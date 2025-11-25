@@ -8,6 +8,8 @@ let localPreviewVideo = null;
 const peerConnections = new Map();
 const remoteVideos = new Map();
 const remoteStreams = new Map();
+const reconnectionAttempts = new Map(); // Track reconnection attempts per peer
+const reconnectionTimeouts = new Map(); // Track reconnection timeout handles
 
 // Track when we're applying a remote command to prevent echo
 let applyingRemoteCommand = false;
@@ -295,6 +297,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     removeLocalPreview();
     // Remove injected controls
     removeInjectedControls();
+    // Clear all reconnection attempts and timeouts
+    reconnectionTimeouts.forEach((timeoutHandle) => {
+      clearTimeout(timeoutHandle);
+    });
+    reconnectionTimeouts.clear();
+    reconnectionAttempts.clear();
+    
     // Close and clear peer connections
     try {
       peerConnections.forEach((pc) => {
@@ -861,6 +870,82 @@ async function handleSignalingMessage(message) {
   }
 }
 
+// Attempt to reconnect to a peer
+async function attemptReconnection(peerId) {
+  if (!partyActive || !userId || !roomId) {
+    console.log('Cannot reconnect - party not active');
+    return;
+  }
+
+  const attempts = reconnectionAttempts.get(peerId) || 0;
+  const maxAttempts = 5;
+  const backoffDelay = Math.min(1000 * Math.pow(2, attempts), 30000); // Exponential backoff, max 30s
+
+  if (attempts >= maxAttempts) {
+    console.log('Max reconnection attempts reached for', peerId);
+    reconnectionAttempts.delete(peerId);
+    reconnectionTimeouts.delete(peerId);
+    return;
+  }
+
+  console.log(`Attempting reconnection to ${peerId} (attempt ${attempts + 1}/${maxAttempts}) in ${backoffDelay}ms`);
+  reconnectionAttempts.set(peerId, attempts + 1);
+
+  // Clear any existing timeout for this peer
+  const existingTimeout = reconnectionTimeouts.get(peerId);
+  if (existingTimeout) {
+    clearTimeout(existingTimeout);
+  }
+
+  // Schedule reconnection attempt
+  const timeoutHandle = setTimeout(async function() {
+    console.log('Reconnecting to', peerId);
+    
+    // Remove old connection
+    const oldPc = peerConnections.get(peerId);
+    if (oldPc) {
+      try {
+        oldPc.close();
+      } catch (e) {
+        console.warn('Error closing old peer connection:', e);
+      }
+      peerConnections.delete(peerId);
+    }
+    
+    // Create new connection and send offer
+    try {
+      const pc = createPeerConnection(peerId);
+      peerConnections.set(peerId, pc);
+      
+      if (localStream) {
+        localStream.getTracks().forEach(t => addOrReplaceTrack(pc, t, localStream));
+      }
+      
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      sendSignal({ type: 'OFFER', from: userId, to: peerId, offer: pc.localDescription });
+      
+      console.log('Reconnection offer sent to', peerId);
+    } catch (err) {
+      console.error('Failed to create reconnection offer:', err);
+      // Retry with next attempt
+      attemptReconnection(peerId);
+    }
+  }, backoffDelay);
+
+  reconnectionTimeouts.set(peerId, timeoutHandle);
+}
+
+// Clear reconnection state for a peer (called on successful connection)
+function clearReconnectionState(peerId) {
+  reconnectionAttempts.delete(peerId);
+  const timeoutHandle = reconnectionTimeouts.get(peerId);
+  if (timeoutHandle) {
+    clearTimeout(timeoutHandle);
+    reconnectionTimeouts.delete(peerId);
+  }
+}
+
 function createPeerConnection(peerId) {
   const pc = new RTCPeerConnection({
     iceServers: [
@@ -903,9 +988,25 @@ function createPeerConnection(peerId) {
 
   pc.onconnectionstatechange = () => {
     console.log('PC state', pc.connectionState, 'for', peerId);
-    if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+    
+    if (pc.connectionState === 'connected') {
+      // Connection successful - clear any reconnection attempts
+      console.log('Connection established successfully with', peerId);
+      clearReconnectionState(peerId);
+    } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+      // Connection lost - attempt reconnection
+      console.warn('Connection', pc.connectionState, 'with', peerId, '- attempting reconnection');
       peerConnections.delete(peerId);
       removeRemoteVideo(peerId);
+      
+      // Attempt to reconnect
+      attemptReconnection(peerId);
+    } else if (pc.connectionState === 'closed') {
+      // Connection intentionally closed - clean up without reconnecting
+      console.log('Connection closed with', peerId);
+      peerConnections.delete(peerId);
+      removeRemoteVideo(peerId);
+      clearReconnectionState(peerId);
     }
   };
 
