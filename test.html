@@ -3,7 +3,7 @@
 <body>
 <h2>WS Test</h2>
 <script>
-    const ws = new WebSocket("wss://toper.dev/ws");
+    const ws = new WebSocket("wss://toper.dev/ws/");
 
     ws.onopen = () => console.log("Connected!");
     ws.onmessage = (e) => console.log("Message:", e.data);

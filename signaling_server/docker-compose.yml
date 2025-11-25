@@ -2,9 +2,12 @@ version: "3.8"
 
 services:
   signaling:
-    build: .
+    image: node:20-alpine
     container_name: signaling
-    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - ./server:/app
+    command: ["node", "server.js"]
     ports:
-      - "4001:4001"  # internal only; nginx will proxy to this
-
+      - "4001:4001"   # Expose to host
+    restart: unless-stopped
