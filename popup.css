@@ -1,5 +1,0 @@
-body { font-family: Arial, sans-serif; width: 380px; padding: 10px; }
-#localStreams { display:flex; gap:8px; margin-top:8px; }
-#localStreams video { width: 160px; height: 90px; background:#000; }
-button { margin:4px 2px; }
-#status { margin-top:8px; font-size: 0.9em; color:#333; }
