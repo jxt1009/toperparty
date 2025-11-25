@@ -11,6 +11,7 @@ export class SyncManager {
     this.expectedEvents = new Set(); // Track which events we're expecting from programmatic control
     this.lastProgrammaticSeekAt = 0; // Track when we last did a programmatic seek
     this.lastRemoteCommandAt = 0; // Track when we last received ANY remote command
+    this.lastUserSeekAt = 0; // Track when user last seeked (for ignoring passive sync corrections)
   }
   
   // Setup playback synchronization
@@ -127,15 +128,14 @@ export class SyncManager {
     
     // Passive sync via timeupdate - send position periodically for drift correction
     let lastSentAt = 0;
-    let lastUserSeekAt = 0; // Track when user last seeked
     
     // Track user seeks so passive sync can avoid interfering
     const originalOnSeeked = onSeeked;
     const onSeekedWithTracking = () => {
       // If this was a user action (not suppressed), remember the time
       if (!this.expectedEvents.has('seeked')) {
-        lastUserSeekAt = Date.now();
-        console.log('[Passive sync] User seek detected - will pause passive sync for 5s');
+        this.lastUserSeekAt = Date.now();
+        console.log('[Passive sync] User seek detected - will pause passive/receiving sync for 10s');
       }
       originalOnSeeked();
     };
@@ -149,7 +149,7 @@ export class SyncManager {
       if (now - lastSentAt < 10000) return;
       
       // Don't send if user seeked recently (within 10 seconds)
-      if (now - lastUserSeekAt < 10000) {
+      if (now - this.lastUserSeekAt < 10000) {
         console.log('[Passive sync] Skipping send - user seeked recently');
         return;
       }
@@ -278,9 +278,18 @@ export class SyncManager {
   
   // Handle passive sync (drift correction only)
   async handlePassiveSync(currentTime, isPlaying, fromUserId, messageTimestamp) {
+    const now = Date.now();
+    
+    // Ignore if we just did a user seek (within 10 seconds)
+    const timeSinceUserSeek = now - this.lastUserSeekAt;
+    if (timeSinceUserSeek < 10000) {
+      console.log('[Passive sync] Ignoring - user seeked', (timeSinceUserSeek / 1000).toFixed(1), 's ago');
+      return;
+    }
+    
     // Ignore stale messages (older than 3 seconds)
     if (messageTimestamp) {
-      const messageAge = Date.now() - messageTimestamp;
+      const messageAge = now - messageTimestamp;
       if (messageAge > 3000) {
         console.log('[Passive sync] Ignoring stale message - age:', (messageAge / 1000).toFixed(1), 's');
         return;
