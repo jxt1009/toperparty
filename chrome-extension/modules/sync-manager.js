@@ -9,6 +9,7 @@ export class SyncManager {
     this.syncInterval = null;
     this.suppressBroadcast = false; // Flag to suppress broadcasting when we control video programmatically
     this.expectedEvents = new Set(); // Track which events we're expecting from programmatic control
+    this.lastProgrammaticSeekAt = 0; // Track when we last did a programmatic seek
   }
   
   // Setup playback synchronization
@@ -94,11 +95,21 @@ export class SyncManager {
     // Seek event - broadcast to peers ONLY if it's a user action
     const onSeeked = () => {
       const currentTime = video.currentTime;
-      console.log('[Seeked event] Fired - expectedEvents:', Array.from(this.expectedEvents), 'partyActive:', this.state.isActive(), 'time:', currentTime);
+      const now = Date.now();
+      const timeSinceLastProgrammaticSeek = now - this.lastProgrammaticSeekAt;
+      
+      console.log('[Seeked event] Fired - expectedEvents:', Array.from(this.expectedEvents), 'timeSinceProgSeek:', timeSinceLastProgrammaticSeek, 'ms, time:', currentTime);
       
       if (!this.state.isActive()) return;
       
-      // If this is an expected programmatic event, consume it and don't broadcast
+      // Suppress ALL seeks within 1 second of a programmatic seek (catches multiple events)
+      if (timeSinceLastProgrammaticSeek < 1000) {
+        console.log('[Seeked event] ✓ Suppressed - within 1s of programmatic seek');
+        this.expectedEvents.delete('seeked'); // Clean up if present
+        return;
+      }
+      
+      // Also check expected events (for explicit commands)
       if (this.expectedEvents.has('seeked')) {
         this.expectedEvents.delete('seeked');
         console.log('[Seeked event] ✓ Suppressed - programmatic control (expected event consumed)');
@@ -221,9 +232,10 @@ export class SyncManager {
     const requestedTime = currentTime * 1000; // Convert to ms
     
     try {
-      // Mark that we expect a seeked event
+      // Mark that we expect a seeked event AND record the timestamp
       this.expectedEvents.add('seeked');
-      console.log('[Remote command] Added expected event: seeked');
+      this.lastProgrammaticSeekAt = Date.now();
+      console.log('[Remote command] Added expected event: seeked + timestamp');
       
       console.log('[Remote command] Executing seek(' + requestedTime + 'ms)...');
       await this.netflix.seek(requestedTime);
@@ -275,8 +287,9 @@ export class SyncManager {
       if (timeDiff > 3000) {
         console.log('[Passive sync] ⚠️  Drift detected:', (timeDiff / 1000).toFixed(1), 's - correcting');
         
-        // Add expected events
+        // Add expected events AND record timestamp
         this.expectedEvents.add('seeked');
+        this.lastProgrammaticSeekAt = Date.now();
         if (isPlaying && localPaused) {
           this.expectedEvents.add('play');
         } else if (!isPlaying && !localPaused) {
