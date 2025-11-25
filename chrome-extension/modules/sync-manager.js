@@ -1,20 +1,21 @@
-// sync-manager.js - Handles playback synchronization
-// Rebuilt with simple, reliable logic to prevent feedback loops
+// sync-manager.js - clean, minimal playback synchronisation with echo prevention
 
 export class SyncManager {
   constructor(stateManager, netflixController) {
     this.state = stateManager;
     this.netflix = netflixController;
+
     this.listeners = null;
-    this.syncInterval = null;
-    this.suppressBroadcast = false; // Flag to suppress broadcasting when we control video programmatically
-    this.expectedEvents = new Set(); // Track which events we're expecting from programmatic control
-    this.lastProgrammaticSeekAt = 0; // Track when we last did a programmatic seek
-    this.lastRemoteCommandAt = 0; // Track when we last received ANY remote command
-    this.lastUserSeekAt = 0; // Track when user last seeked (for ignoring passive sync corrections)
+
+    // Echo-prevention and context
+    this.expectedEvents = new Set(); // 'play' | 'pause' | 'seeked'
+    this.lastProgrammaticSeekAt = 0; // ms since epoch
+    this.lastUserSeekAt = 0;        // ms since epoch
+    this.lastRemoteCommandAt = 0;   // ms since epoch
   }
-  
-  // Setup playback synchronization
+
+  // ---- Public lifecycle -------------------------------------------------
+
   async setup() {
     try {
       const video = await this.waitForVideo();
@@ -22,21 +23,35 @@ export class SyncManager {
         console.warn('Netflix video element not found after wait');
         return;
       }
-      
+
       this.attachEventListeners(video);
-      this.startPeriodicSync(video);
-      
-      console.log('Playback sync setup complete');
+      console.log('[SyncManager] Playback sync setup complete');
     } catch (err) {
-      console.error('Error setting up playback sync:', err);
+      console.error('[SyncManager] Error setting up playback sync:', err);
     }
   }
-  
-  // Wait for Netflix video element to appear
+
+  teardown() {
+    if (this.listeners && this.listeners.video) {
+      const { video, onPlay, onPause, onSeeked, onTimeUpdate } = this.listeners;
+      try {
+        video.removeEventListener('play', onPlay);
+        video.removeEventListener('pause', onPause);
+        video.removeEventListener('seeked', onSeeked);
+        video.removeEventListener('timeupdate', onTimeUpdate);
+      } catch (e) {
+        console.warn('[SyncManager] Error removing video event listeners:', e);
+      }
+      this.listeners = null;
+    }
+  }
+
+  // ---- DOM wiring -------------------------------------------------------
+
   waitForVideo() {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('Video element timeout')), 10000);
-      
+
       const check = () => {
         const video = this.netflix.getVideoElement();
         if (video) {
@@ -46,292 +61,230 @@ export class SyncManager {
           setTimeout(check, 100);
         }
       };
+
       check();
     });
   }
-  
-  // Attach event listeners to video element
+
   attachEventListeners(video) {
-    // Play event - broadcast to peers ONLY if it's a user action
+    // PLAY -----------------------------------------------------------------
     const onPlay = () => {
-      console.log('[Play event] Fired - expectedEvents:', Array.from(this.expectedEvents), 'partyActive:', this.state.isActive());
-      
       if (!this.state.isActive()) return;
-      
-      // If this is an expected programmatic event, consume it and don't broadcast
+
+      console.log('[SyncManager] play event, expectedEvents =', Array.from(this.expectedEvents));
+
       if (this.expectedEvents.has('play')) {
         this.expectedEvents.delete('play');
-        console.log('[Play event] ✓ Suppressed - programmatic control (expected event consumed)');
+        console.log('[SyncManager] play suppressed (expected programmatic)');
         return;
       }
-      
-      console.log('[Play event] ✓ User action - broadcasting to peers');
-      this.state.safeSendMessage({ 
-        type: 'PLAY_PAUSE', 
-        control: 'play', 
-        timestamp: video.currentTime 
+
+      console.log('[SyncManager] play from user → broadcasting');
+      this.state.safeSendMessage({
+        type: 'PLAY_PAUSE',
+        control: 'play',
+        // timestamp is primarily informational here
+        timestamp: video.currentTime,
       });
     };
-    
-    // Pause event - broadcast to peers ONLY if it's a user action
+
+    // PAUSE ----------------------------------------------------------------
     const onPause = () => {
-      console.log('[Pause event] Fired - expectedEvents:', Array.from(this.expectedEvents), 'partyActive:', this.state.isActive());
-      
       if (!this.state.isActive()) return;
-      
-      // If this is an expected programmatic event, consume it and don't broadcast
+
+      console.log('[SyncManager] pause event, expectedEvents =', Array.from(this.expectedEvents));
+
       if (this.expectedEvents.has('pause')) {
         this.expectedEvents.delete('pause');
-        console.log('[Pause event] ✓ Suppressed - programmatic control (expected event consumed)');
+        console.log('[SyncManager] pause suppressed (expected programmatic)');
         return;
       }
-      
-      console.log('[Pause event] ✓ User action - broadcasting to peers');
-      this.state.safeSendMessage({ 
-        type: 'PLAY_PAUSE', 
-        control: 'pause', 
-        timestamp: video.currentTime 
+
+      console.log('[SyncManager] pause from user → broadcasting');
+      this.state.safeSendMessage({
+        type: 'PLAY_PAUSE',
+        control: 'pause',
+        timestamp: video.currentTime,
       });
     };
-    
-    // Seek event - broadcast to peers ONLY if it's a user action
+
+    // SEEKED ---------------------------------------------------------------
     const onSeeked = () => {
-      const currentTime = video.currentTime;
-      const now = Date.now();
-      const timeSinceLastProgrammaticSeek = now - this.lastProgrammaticSeekAt;
-      
-      console.log('[Seeked event] Fired - expectedEvents:', Array.from(this.expectedEvents), 'timeSinceProgSeek:', timeSinceLastProgrammaticSeek, 'ms, time:', currentTime);
-      
       if (!this.state.isActive()) return;
-      
-      // Suppress ALL seeks within 1 second of a programmatic seek (catches multiple events)
-      if (timeSinceLastProgrammaticSeek < 1000) {
-        console.log('[Seeked event] ✓ Suppressed - within 1s of programmatic seek');
-        this.expectedEvents.delete('seeked'); // Clean up if present
+
+      const now = Date.now();
+      const currentTime = video.currentTime;
+      const sinceProgSeek = now - this.lastProgrammaticSeekAt;
+
+      console.log('[SyncManager] seeked event @', currentTime, 's, expectedEvents =', Array.from(this.expectedEvents), 'sinceProgSeek =', sinceProgSeek, 'ms');
+
+      // Any seeked within 1s of a programmatic seek is treated as programmatic.
+      if (sinceProgSeek >= 0 && sinceProgSeek < 1000) {
+        this.expectedEvents.delete('seeked');
+        console.log('[SyncManager] seeked suppressed (within 1s of programmatic seek)');
         return;
       }
-      
-      // Also check expected events (for explicit commands)
+
       if (this.expectedEvents.has('seeked')) {
         this.expectedEvents.delete('seeked');
-        console.log('[Seeked event] ✓ Suppressed - programmatic control (expected event consumed)');
+        console.log('[SyncManager] seeked suppressed (expected programmatic)');
         return;
       }
-      
-      console.log('[Seeked event] ✓ User action - broadcasting to peers');
-      this.state.safeSendMessage({ 
-        type: 'SEEK', 
-        currentTime: video.currentTime, 
-        isPlaying: !video.paused 
+
+      // This is a genuine user seek.
+      this.lastUserSeekAt = now;
+      console.log('[SyncManager] user seek → broadcasting');
+
+      this.state.safeSendMessage({
+        type: 'SEEK',
+        currentTime: video.currentTime,
+        isPlaying: !video.paused,
       });
     };
-    
-    // Passive sync via timeupdate - send position periodically for drift correction
-    let lastSentAt = 0;
-    
-    // Track user seeks so passive sync can avoid interfering
-    const originalOnSeeked = onSeeked;
-    const onSeekedWithTracking = () => {
-      // If this was a user action (not suppressed), remember the time
-      if (!this.expectedEvents.has('seeked')) {
-        this.lastUserSeekAt = Date.now();
-        console.log('[Passive sync] User seek detected - will pause passive/receiving sync for 10s');
-      }
-      originalOnSeeked();
-    };
-    
+
+    // PASSIVE SYNC SENDER --------------------------------------------------
+    let lastPassiveSentAt = 0;
+
     const onTimeUpdate = () => {
       if (!this.state.isActive()) return;
-      
+
       const now = Date.now();
-      
-      // Only send every 10 seconds (be very conservative)
-      if (now - lastSentAt < 10000) return;
-      
-      // Don't send if user seeked recently (within 10 seconds)
+
+      // Only send at most once every 10s.
+      if (now - lastPassiveSentAt < 10000) return;
+
+      // Dont send around active user/remote actions.
       if (now - this.lastUserSeekAt < 10000) {
-        console.log('[Passive sync] Skipping send - user seeked recently');
+        console.log('[SyncManager] passive send skipped (recent local seek)');
         return;
       }
-      
-      // Don't send if we received a remote command recently (within 10 seconds)
       if (now - this.lastRemoteCommandAt < 10000) {
-        console.log('[Passive sync] Skipping send - remote command received recently');
+        console.log('[SyncManager] passive send skipped (recent remote command)');
         return;
       }
-      
-      lastSentAt = now;
-      
-      // Send our current position for others to sync to
-      console.log('[Passive sync] Broadcasting position:', video.currentTime.toFixed(2), 's');
-      this.state.safeSendMessage({ 
-        type: 'SYNC_TIME', 
-        currentTime: video.currentTime, 
+
+      if (video.paused) return; // only sync while playing
+
+      lastPassiveSentAt = now;
+
+      const payload = {
+        type: 'SYNC_TIME',
+        currentTime: video.currentTime,
         isPlaying: !video.paused,
-        timestamp: now
-      });
+        timestamp: now,
+      };
+
+      console.log('[SyncManager] passive send', payload);
+      this.state.safeSendMessage(payload);
     };
-    
+
     video.addEventListener('play', onPlay);
     video.addEventListener('pause', onPause);
-    video.addEventListener('seeked', onSeekedWithTracking);
+    video.addEventListener('seeked', onSeeked);
     video.addEventListener('timeupdate', onTimeUpdate);
-    
-    // Save references for teardown
-    this.listeners = { onPlay, onPause, onSeeked: onSeekedWithTracking, onTimeUpdate, video };
+
+    this.listeners = { video, onPlay, onPause, onSeeked, onTimeUpdate };
   }
-  
-  // No longer needed - we use timeupdate events for passive sync
-  startPeriodicSync(video) {
-    // Removed - timeupdate does this for us now
-  }
-  
-  // Teardown playback synchronization
-  teardown() {
-    if (this.syncInterval) {
-      clearInterval(this.syncInterval);
-      this.syncInterval = null;
-    }
-    
-    if (this.listeners && this.listeners.video) {
-      const { video, onPlay, onPause, onSeeked, onTimeUpdate } = this.listeners;
-      try {
-        video.removeEventListener('play', onPlay);
-        video.removeEventListener('pause', onPause);
-        video.removeEventListener('seeked', onSeeked);
-        video.removeEventListener('timeupdate', onTimeUpdate);
-      } catch (e) {
-        console.warn('Error removing video event listeners:', e);
-      }
-      this.listeners = null;
-    }
-  }
-  
-  // Handle remote playback control commands (explicit play/pause)
+
+  // ---- Remote explicit commands ----------------------------------------
+
   async handlePlaybackControl(control, fromUserId) {
-    console.log('[Remote command] Received', control, 'from', fromUserId);
-    
-    // Record that we received a remote command (suppress passive sync for 5s)
+    console.log('[SyncManager] remote PLAY_PAUSE', control, 'from', fromUserId);
+
     this.lastRemoteCommandAt = Date.now();
-    
-    // Mark that we expect this event
     this.expectedEvents.add(control); // 'play' or 'pause'
-    console.log('[Remote command] Added expected event:', control);
-    
+
     try {
       if (control === 'play') {
-        console.log('[Remote command] Executing play()...');
         await this.netflix.play();
-        console.log('[Remote command] Play completed');
       } else if (control === 'pause') {
-        console.log('[Remote command] Executing pause()...');
         await this.netflix.pause();
-        console.log('[Remote command] Pause completed');
       }
     } catch (err) {
-      console.error('[Remote command] Error executing', control, err);
-      // Clean up expected event on error
+      console.error('[SyncManager] error executing remote', control, err);
       this.expectedEvents.delete(control);
     }
   }
-  
-  // Handle remote seek commands (explicit seek)
+
   async handleSeek(currentTime, isPlaying, fromUserId) {
-    console.log('[Remote command] Received SEEK to', currentTime, 's from', fromUserId, 'isPlaying:', isPlaying);
-    
-    const requestedTime = currentTime * 1000; // Convert to ms
-    
+    console.log('[SyncManager] remote SEEK to', currentTime, 's from', fromUserId, 'isPlaying =', isPlaying);
+
+    const targetMs = currentTime * 1000;
+    this.lastRemoteCommandAt = Date.now();
+    this.lastProgrammaticSeekAt = Date.now();
+    this.expectedEvents.add('seeked');
+
     try {
-      // Record that we received a remote command (suppress passive sync for 5s)
-      this.lastRemoteCommandAt = Date.now();
-      
-      // Mark that we expect a seeked event AND record the timestamp
-      this.expectedEvents.add('seeked');
-      this.lastProgrammaticSeekAt = Date.now();
-      console.log('[Remote command] Added expected event: seeked + timestamp');
-      
-      console.log('[Remote command] Executing seek(' + requestedTime + 'ms)...');
-      await this.netflix.seek(requestedTime);
-      console.log('[Remote command] Seek completed');
-      
-      // Also sync play/pause state
+      await this.netflix.seek(targetMs);
+
       const isPaused = await this.netflix.isPaused();
-      console.log('[Remote command] Current state - isPaused:', isPaused);
-      
+
       if (isPlaying && isPaused) {
         this.expectedEvents.add('play');
-        console.log('[Remote command] Need to resume - executing play()...');
         await this.netflix.play();
-        console.log('[Remote command] Resumed after seek');
       } else if (!isPlaying && !isPaused) {
         this.expectedEvents.add('pause');
-        console.log('[Remote command] Need to pause - executing pause()...');
         await this.netflix.pause();
-        console.log('[Remote command] Paused after seek');
       }
     } catch (err) {
-      console.error('[Remote command] Error during seek:', err);
-      // Clean up expected events on error
+      console.error('[SyncManager] error during remote seek', err);
       this.expectedEvents.clear();
     }
   }
-  
-  // Handle passive sync (drift correction only)
+
+  // ---- Passive sync receiver -------------------------------------------
+
   async handlePassiveSync(currentTime, isPlaying, fromUserId, messageTimestamp) {
     const now = Date.now();
-    
-    // Ignore if we just did a user seek (within 10 seconds)
-    const timeSinceUserSeek = now - this.lastUserSeekAt;
-    if (timeSinceUserSeek < 10000) {
-      console.log('[Passive sync] Ignoring - user seeked', (timeSinceUserSeek / 1000).toFixed(1), 's ago');
+
+    // Never let passive sync override a recent *local* seek.
+    const sinceUserSeek = now - this.lastUserSeekAt;
+    if (sinceUserSeek >= 0 && sinceUserSeek < 10000) {
+      console.log('[SyncManager] passive recv ignored (local seek', (sinceUserSeek / 1000).toFixed(1), 's ago)');
       return;
     }
-    
-    // Ignore stale messages (older than 3 seconds)
+
     if (messageTimestamp) {
-      const messageAge = now - messageTimestamp;
-      if (messageAge > 3000) {
-        console.log('[Passive sync] Ignoring stale message - age:', (messageAge / 1000).toFixed(1), 's');
+      const age = now - messageTimestamp;
+      if (age > 3000) {
+        console.log('[SyncManager] passive recv ignored (stale,', (age / 1000).toFixed(1), 's)');
         return;
       }
     }
-    
+
     try {
-      const localTime = await this.netflix.getCurrentTime();
+      const localTimeMs = await this.netflix.getCurrentTime();
       const localPaused = await this.netflix.isPaused();
-      const requestedTime = currentTime * 1000; // Convert to ms
-      const timeDiff = Math.abs(localTime - requestedTime);
-      
-      console.log('[Passive sync] Received position:', currentTime.toFixed(2), 's from', fromUserId);
-      console.log('[Passive sync] Local:', (localTime/1000).toFixed(2), 's | Drift:', (timeDiff/1000).toFixed(2), 's');
-      
-      // Only correct drift > 3 seconds (conservative threshold)
-      if (timeDiff > 3000) {
-        console.log('[Passive sync] ⚠️  Drift detected:', (timeDiff / 1000).toFixed(1), 's - correcting');
-        
-        // Add expected events AND record timestamp
-        this.expectedEvents.add('seeked');
-        this.lastProgrammaticSeekAt = Date.now();
-        if (isPlaying && localPaused) {
-          this.expectedEvents.add('play');
-        } else if (!isPlaying && !localPaused) {
-          this.expectedEvents.add('pause');
-        }
-        
-        await this.netflix.seek(requestedTime);
-        
-        // Sync play/pause state too
-        if (isPlaying && localPaused) {
-          await this.netflix.play();
-        } else if (!isPlaying && !localPaused) {
-          await this.netflix.pause();
-        }
-      } else {
-        console.log('[Passive sync] ✓ In sync - drift within threshold');
+      const targetMs = currentTime * 1000;
+      const driftMs = Math.abs(localTimeMs - targetMs);
+
+      console.log('[SyncManager] passive recv from', fromUserId, 'remote =', currentTime.toFixed(2), 's, local =', (localTimeMs / 1000).toFixed(2), 's, drift =', (driftMs / 1000).toFixed(2), 's');
+
+      // Only correct significant drift.
+      if (driftMs <= 3000) {
+        console.log('[SyncManager] passive recv: within drift threshold, no correction');
+        return;
+      }
+
+      // Apply correction like a remote seek, but without rebroadcast.
+      this.lastProgrammaticSeekAt = now;
+      this.expectedEvents.add('seeked');
+
+      if (isPlaying && localPaused) {
+        this.expectedEvents.add('play');
+      } else if (!isPlaying && !localPaused) {
+        this.expectedEvents.add('pause');
+      }
+
+      await this.netflix.seek(targetMs);
+
+      if (isPlaying && localPaused) {
+        await this.netflix.play();
+      } else if (!isPlaying && !localPaused) {
+        await this.netflix.pause();
       }
     } catch (err) {
-      console.error('[Passive sync] Error:', err);
-      // Clean up expected events on error
+      console.error('[SyncManager] error handling passive sync', err);
       this.expectedEvents.clear();
     }
   }
