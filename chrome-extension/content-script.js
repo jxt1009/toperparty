@@ -237,10 +237,20 @@ function setupPlaybackSync() {
     video.addEventListener('play', onPlay);
     video.addEventListener('pause', onPause);
 
+    // Track seeking events to broadcast manual scrubbing
+    const onSeeked = function handleSeekedEvent() {
+      if (partyActive && !ignoringPlaybackEvents) {
+        console.log('Local seek completed - broadcasting position to peers');
+        chrome.runtime.sendMessage({ type: 'SYNC_TIME', currentTime: video.currentTime, isPlaying: !video.paused }).catch(function() {});
+      }
+    };
+    
+    video.addEventListener('seeked', onSeeked);
+
     // Throttled timeupdate sender (every ~1s at most)
     let lastSentAt = 0;
     const onTimeUpdate = function handleTimeUpdate() {
-      if (!partyActive) return;
+      if (!partyActive || ignoringPlaybackEvents) return;
       const now = Date.now();
       if (now - lastSentAt < 1000) return; // throttle to ~1s
       lastSentAt = now;
@@ -251,13 +261,13 @@ function setupPlaybackSync() {
 
     // Periodic fallback sync (every 5 seconds)
     window.playbackSyncInterval = setInterval(function syncPlaybackPeriodic() {
-      if (partyActive && video) {
+      if (partyActive && video && !ignoringPlaybackEvents) {
         chrome.runtime.sendMessage({ type: 'SYNC_TIME', currentTime: video.currentTime, isPlaying: !video.paused }).catch(function() {});
       }
     }, 5000);
 
     // Save references for teardown
-    window.__toperparty_video_listeners = { onPlay, onPause, onTimeUpdate, video };
+    window.__toperparty_video_listeners = { onPlay, onPause, onSeeked, onTimeUpdate, video };
 
     console.log('Playback sync setup complete');
   }).catch(function onVideoWaitError(err) {
@@ -277,6 +287,7 @@ function teardownPlaybackSync() {
     try {
       refs.video.removeEventListener('play', refs.onPlay);
       refs.video.removeEventListener('pause', refs.onPause);
+      refs.video.removeEventListener('seeked', refs.onSeeked);
       refs.video.removeEventListener('timeupdate', refs.onTimeUpdate);
     } catch (e) {
       // ignore

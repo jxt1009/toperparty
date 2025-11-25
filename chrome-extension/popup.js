@@ -61,7 +61,7 @@ function updateUI() {
     startBtn.classList.add('hidden');
     stopBtn.classList.remove('hidden');
     partyInfo.classList.remove('hidden');
-    videoSection.classList.remove('hidden');
+    //videoSection.classList.remove('hidden');
     roomDisplay.textContent = roomId;
     userDisplay.textContent = userId;
 
