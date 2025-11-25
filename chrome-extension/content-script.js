@@ -1,192 +1,94 @@
-// content-script.js - Injected into Netflix pages
+// content-script.js - Modular version with ES6 imports
 
-let partyActive = false;
-let userId = null;
-let roomId = null;
+import { StateManager } from './modules/state-manager.js';
+import { NetflixController } from './modules/netflix-controller.js';
+import { SyncManager } from './modules/sync-manager.js';
+import { WebRTCManager } from './modules/webrtc-manager.js';
+import { UIManager } from './modules/ui-manager.js';
+import { URLSync } from './modules/url-sync.js';
+
+// Initialize managers
+const stateManager = new StateManager();
+const netflixController = new NetflixController();
+const syncManager = new SyncManager(stateManager, netflixController);
+const webrtcManager = new WebRTCManager();
+const uiManager = new UIManager();
+const urlSync = new URLSync(stateManager);
+
+// WebRTC variables (keeping these in main file for now)
 let localStream = null;
-let localPreviewVideo = null;
-const peerConnections = new Map();
-const remoteVideos = new Map();
-const remoteStreams = new Map();
-const reconnectionAttempts = new Map(); // Track reconnection attempts per peer
-const reconnectionTimeouts = new Map(); // Track reconnection timeout handles
-
-// Simple state tracking for echo prevention
-let lastLocalAction = { type: null, time: 0 }; // Track last local action to prevent echo
-let lastRemoteAction = { type: null, time: 0 }; // Track last remote action for logging
-
-// URL monitoring - track when user navigates to different shows
-let lastKnownUrl = window.location.href;
-let restoringPartyState = false; // prevent URL broadcast during restoration
+const peerConnections = webrtcManager.peerConnections;
+const remoteVideos = uiManager.getRemoteVideos();
+const remoteStreams = uiManager.getRemoteStreams();
+const reconnectionAttempts = webrtcManager.reconnectionAttempts;
+const reconnectionTimeouts = webrtcManager.reconnectionTimeouts;
 
 // Check if we need to restore party state after navigation
 (function checkRestorePartyState() {
-  const partyState = sessionStorage.getItem('toperparty_state');
-  if (partyState) {
-    try {
-      const state = JSON.parse(partyState);
-      console.log('Detected party state after navigation, will restore:', state);
+  const restorationState = urlSync.getRestorationState();
+  if (restorationState) {
+    console.log('Detected party state after navigation, will restore:', restorationState);
+    
+    // Clear the stored state
+    urlSync.clearState();
+    
+    // Set flag to prevent URL broadcast during restoration
+    stateManager.setRestoringFlag(true);
+    
+    // Notify background that we need to rejoin
+    setTimeout(function() {
+      chrome.runtime.sendMessage({
+        type: 'RESTORE_PARTY',
+        roomId: restorationState.roomId,
+        userId: restorationState.userId
+      });
       
-      // Set flag to prevent URL broadcast during restoration
-      restoringPartyState = true;
-      
-      // Clear the stored state
-      sessionStorage.removeItem('toperparty_state');
-      
-      // Notify background that we need to rejoin
+      // Clear restoration flag after party is restored
       setTimeout(function() {
-        chrome.runtime.sendMessage({
-          type: 'RESTORE_PARTY',
-          roomId: state.roomId,
-          userId: state.userId
-        });
-        
-        // Clear restoration flag after party is restored
-        setTimeout(function() {
-          restoringPartyState = false;
-          console.log('Party restoration complete, URL monitoring active');
-        }, 2000);
-      }, 1000); // Wait 1s for page to stabilize
-    } catch (e) {
-      console.error('Failed to restore party state:', e);
-      sessionStorage.removeItem('toperparty_state');
-      restoringPartyState = false;
-    }
+        stateManager.setRestoringFlag(false);
+        console.log('Party restoration complete, URL monitoring active');
+      }, 2000);
+    }, 1000); // Wait 1s for page to stabilize
   }
 })();
 
 // Inject Netflix API access script into page context
-(function injectNetflixAPIHelper() {
-  const script = document.createElement('script');
-  script.src = chrome.runtime.getURL('netflix-api-bridge.js');
-  (document.head || document.documentElement).appendChild(script);
-  script.onload = function() {
-    console.log('Netflix API bridge loaded');
-    script.remove();
-  };
-})();
-
-// Netflix API wrapper for content script
-const NetflixPlayer = {
-  _sendCommand: function(command, args = []) {
-    return new Promise(function(resolve) {
-      const handler = function(e) {
-        if (e.detail.command === command) {
-          document.removeEventListener('__toperparty_response', handler);
-          resolve(e.detail.result);
-        }
-      };
-      document.addEventListener('__toperparty_response', handler);
-      setTimeout(function() { resolve(null); }, 1000); // timeout fallback
-      document.dispatchEvent(new CustomEvent('__toperparty_command', { detail: { command, args } }));
-    });
-  },
-  
-  play: function() {
-    return this._sendCommand('play');
-  },
-  
-  pause: function() {
-    return this._sendCommand('pause');
-  },
-  
-  seek: function(timeMs) {
-    return this._sendCommand('seek', [timeMs]);
-  },
-  
-  getCurrentTime: function() {
-    return this._sendCommand('getCurrentTime');
-  },
-  
-  isPaused: function() {
-    return this._sendCommand('isPaused');
-  }
-};
+netflixController.injectAPIBridge();
 
 // Find Netflix video player (fallback for monitoring)
 function getVideoElement() {
   return document.querySelector('video');
 }
 
-// Check if extension context is still valid
-function isExtensionContextValid() {
-  try {
-    // Try to access chrome.runtime.id - will throw if context is invalidated
-    return chrome.runtime && chrome.runtime.id;
-  } catch (e) {
-    return false;
-  }
-}
-
-// Safely send message to background, handling invalidated context
-function safeSendMessage(message, callback) {
-  if (!isExtensionContextValid()) {
-    console.warn('Extension context invalidated - please reload the page');
-    return;
-  }
-  try {
-    chrome.runtime.sendMessage(message, callback);
-  } catch (e) {
-    console.warn('Failed to send message, extension may have been reloaded:', e.message);
-  }
-}
-
-// Helper to check if an action is an echo of what we just did
-function isEcho(actionType) {
-  const now = Date.now();
-  const timeSinceLocal = now - lastLocalAction.time;
-  
-  // If we just performed this action within 500ms, it's likely an echo
-  if (lastLocalAction.type === actionType && timeSinceLocal < 500) {
-    console.log(`Ignoring echo of ${actionType} (${timeSinceLocal}ms ago)`);
-    return true;
-  }
-  return false;
-}
-
-// Helper to track that we performed an action
-function recordLocalAction(actionType) {
-  lastLocalAction = { type: actionType, time: Date.now() };
-  console.log(`Recorded local action: ${actionType}`);
-}
-
-// Helper to track remote actions
-function recordRemoteAction(actionType) {
-  lastRemoteAction = { type: actionType, time: Date.now() };
-  console.log(`Recorded remote action: ${actionType}`);
-}
-
 // URL monitoring - check for navigation changes
+let lastKnownUrl = window.location.href;
+
 function startUrlMonitoring() {
+  const state = stateManager.getState();
+  
   // Save party state whenever URL is about to change (for hard navigations)
   window.addEventListener('beforeunload', function savePartyStateBeforeUnload() {
-    if (partyActive && userId && roomId) {
-      const stateToSave = {
-        roomId: roomId,
-        userId: userId,
-        navigatedFrom: window.location.href,
-        timestamp: Date.now()
-      };
-      sessionStorage.setItem('toperparty_state', JSON.stringify(stateToSave));
-      console.log('Saved party state before unload');
+    if (state.partyActive && state.userId && state.roomId) {
+      urlSync.saveState();
     }
   });
   
   // Also monitor for soft navigations (client-side routing)
   setInterval(function checkUrlChange() {
     const currentUrl = window.location.href;
+    const state = stateManager.getState();
     
     // Check if URL changed and party is active (but not during restoration)
-    if (currentUrl !== lastKnownUrl && partyActive && !restoringPartyState) {
+    if (currentUrl !== lastKnownUrl && state.partyActive && !state.restoringPartyState) {
       console.log('URL changed from', lastKnownUrl, 'to', currentUrl);
       lastKnownUrl = currentUrl;
       
       // Broadcast URL change to other clients
-      safeSendMessage({
+      stateManager.safeSendMessage({
         type: 'URL_CHANGE',
         url: currentUrl
       });
-    } else if (!restoringPartyState) {
+    } else if (!state.restoringPartyState) {
       // Silently update lastKnownUrl if we're not in restoration mode
       lastKnownUrl = currentUrl;
     }
@@ -195,6 +97,7 @@ function startUrlMonitoring() {
 
 function stopUrlMonitoring() {
   lastKnownUrl = window.location.href;
+  urlSync.stop();
 }
 
 // Listen for messages from background script
@@ -204,6 +107,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     handleSignalingMessage(request.message).catch(err => console.error('Signal handling error:', err));
     return; // no sendResponse needed
   }
+  
   if (request.type === 'REQUEST_MEDIA_STREAM') {
     // Get media stream for webcam/mic
     navigator.mediaDevices.getUserMedia({
@@ -212,6 +116,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     })
       .then((stream) => {
         localStream = stream;
+        webrtcManager.setLocalStream(stream);
         console.log('Media stream obtained in content script');
         
         // Monitor stream tracks for unexpected ending
@@ -249,29 +154,25 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.type === 'PARTY_STARTED') {
-    partyActive = true;
-    userId = request.userId;
-    roomId = request.roomId;
-    console.log('Party started! Room:', roomId, 'User:', userId);
+    stateManager.startParty(request.userId, request.roomId);
+    console.log('Party started! Room:', request.roomId, 'User:', request.userId);
     
     // Start monitoring URL changes
     startUrlMonitoring();
     
-    // Inject controls and setup playback sync (wait for video if necessary)
-    //injectControls();
-    setupPlaybackSync();
+    // Setup playback sync
+    syncManager.setup();
     sendResponse({ success: true });
   }
 
   if (request.type === 'PARTY_STOPPED') {
-    partyActive = false;
-    userId = null;
-    roomId = null;
+    stateManager.stopParty();
     
     // Stop URL monitoring
     stopUrlMonitoring();
     
-    teardownPlaybackSync();
+    // Teardown sync
+    syncManager.teardown();
     
     // Stop stream monitor
     stopLocalStreamMonitor();
@@ -280,11 +181,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (localStream) {
       localStream.getTracks().forEach(track => track.stop());
       localStream = null;
+      webrtcManager.setLocalStream(null);
     }
+    
     // Remove local preview UI
     removeLocalPreview();
+    
     // Remove injected controls
     removeInjectedControls();
+    
     // Clear all reconnection attempts and timeouts
     reconnectionTimeouts.forEach((timeoutHandle) => {
       clearTimeout(timeoutHandle);
@@ -299,6 +204,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       });
       peerConnections.clear();
     } catch (e) {}
+    
     // Remove remote video elements
     try {
       remoteVideos.forEach((v, id) => removeRemoteVideo(id));
@@ -309,93 +215,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.type === 'APPLY_PLAYBACK_CONTROL') {
-    console.log('Applying remote', request.control, 'command from', request.fromUserId);
-    recordRemoteAction(request.control);
-    
-    if (request.control === 'play') {
-      NetflixPlayer.play().then(function() {
-        console.log('Remote play completed');
-        recordLocalAction('play'); // Prevent echo of this action
-      }).catch(function(err) {
-        console.error('Failed to apply remote play:', err);
-      });
-    } else if (request.control === 'pause') {
-      NetflixPlayer.pause().then(function() {
-        console.log('Remote pause completed');
-        recordLocalAction('pause'); // Prevent echo of this action
-      }).catch(function(err) {
-        console.error('Failed to apply remote pause:', err);
-      });
-    }
+    syncManager.handlePlaybackControl(request);
     sendResponse({ success: true });
   }
 
   if (request.type === 'APPLY_SYNC_PLAYBACK') {
-    // Passive sync - only correct significant drift
-    NetflixPlayer.getCurrentTime().then(function(currentTime) {
-      const requestedTime = request.currentTime * 1000; // Convert to ms
-      const timeDiff = Math.abs(currentTime - requestedTime);
-      
-      // Check if we just did a local action - don't override it with passive sync
-      const timeSinceLocalAction = Date.now() - lastLocalAction.time;
-      if (timeSinceLocalAction < 2000) {
-        console.log('Ignoring passive sync - recent local action:', lastLocalAction.type, timeSinceLocalAction, 'ms ago');
-        return;
-      }
-      
-      // Only sync if times differ significantly (avoid micro-adjustments)
-      if (timeDiff > 2000) { // 2 second threshold
-        console.log('Passive sync: diff was', (timeDiff / 1000).toFixed(1), 's - correcting');
-        NetflixPlayer.seek(requestedTime).then(function() {
-          recordLocalAction('seek'); // Prevent echo
-        });
-      }
-      
-      // Handle play/pause state sync
-      NetflixPlayer.isPaused().then(function(isPaused) {
-        if (request.isPlaying && isPaused && timeSinceLocalAction > 2000) {
-          console.log('Passive sync: resuming playback');
-          NetflixPlayer.play().then(function() {
-            recordLocalAction('play');
-          });
-        } else if (!request.isPlaying && !isPaused && timeSinceLocalAction > 2000) {
-          console.log('Passive sync: pausing playback');
-          NetflixPlayer.pause().then(function() {
-            recordLocalAction('pause');
-          });
-        }
-      });
-    });
+    syncManager.handlePassiveSync(request);
     sendResponse({ success: true });
   }
 
   if (request.type === 'APPLY_SEEK') {
-    console.log('Applying remote SEEK to', request.currentTime, 's from', request.fromUserId);
-    recordRemoteAction('seek');
-    
-    // Always seek to exact position (explicit command, no threshold)
-    const requestedTime = request.currentTime * 1000; // Convert to ms
-    
-    NetflixPlayer.seek(requestedTime).then(function() {
-      console.log('Remote seek completed');
-      recordLocalAction('seek'); // Prevent echo
-      
-      // Also sync play/pause state
-      NetflixPlayer.isPaused().then(function(isPaused) {
-        if (request.isPlaying && isPaused) {
-          NetflixPlayer.play().then(function() {
-            recordLocalAction('play');
-          });
-        } else if (!request.isPlaying && !isPaused) {
-          NetflixPlayer.pause().then(function() {
-            recordLocalAction('pause');
-          });
-        }
-      });
-    }).catch(function(err) {
-      console.error('Failed to apply remote seek:', err);
-    });
-    
+    syncManager.handleSeek(request);
     sendResponse({ success: true });
   }
 
@@ -403,14 +233,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     console.log('Applying URL change from remote user:', request.url, 'from user:', request.fromUserId);
     
     // Save party state before navigation so we can restore after reload
-    if (partyActive && userId && roomId) {
-      const stateToSave = {
-        roomId: roomId,
-        userId: userId,
-        navigatedFrom: window.location.href,
-        timestamp: Date.now()
-      };
-      sessionStorage.setItem('toperparty_state', JSON.stringify(stateToSave));
+    const state = stateManager.getState();
+    if (state.partyActive && state.userId && state.roomId) {
+      urlSync.saveState();
       console.log('Saved party state before navigation');
     }
     
@@ -422,199 +247,34 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
-// Setup playback synchronization
-function setupPlaybackSync() {
-  // Wait for the Netflix <video> element to be present, then attach listeners
-  waitForVideo().then(function onVideoReady(video) {
-    if (!video) {
-      console.warn('Netflix video element not found after wait');
-      return;
-    }
-
-    // Track play events - simple approach: always broadcast unless it's an echo
-    const onPlay = function handlePlayEvent() {
-      if (!partyActive) return;
-      
-      if (isEcho('play')) return;
-      
-      console.log('Local play - broadcasting to peers');
-      recordLocalAction('play');
-      safeSendMessage({ type: 'PLAY_PAUSE', control: 'play', timestamp: video.currentTime });
-    };
-
-    // Track pause events - simple approach: always broadcast unless it's an echo
-    const onPause = function handlePauseEvent() {
-      if (!partyActive) return;
-      
-      if (isEcho('pause')) return;
-      
-      console.log('Local pause - broadcasting to peers');
-      recordLocalAction('pause');
-      safeSendMessage({ type: 'PLAY_PAUSE', control: 'pause', timestamp: video.currentTime });
-    };
-
-    video.addEventListener('play', onPlay);
-    video.addEventListener('pause', onPause);
-
-    // Track seeking events - always broadcast unless it's an echo
-    const onSeeked = function handleSeekedEvent() {
-      if (!partyActive) return;
-      
-      if (isEcho('seek')) return;
-      
-      console.log('Local seek to', video.currentTime, '- broadcasting to peers');
-      recordLocalAction('seek');
-      safeSendMessage({ type: 'SEEK', currentTime: video.currentTime, isPlaying: !video.paused });
-    };
-    
-    video.addEventListener('seeked', onSeeked);
-
-    // Throttled timeupdate sender (every ~1s at most) - for passive drift correction only
-    let lastSentAt = 0;
-    const onTimeUpdate = function handleTimeUpdate() {
-      if (!partyActive) return;
-      
-      const now = Date.now();
-      if (now - lastSentAt < 1000) return; // throttle to ~1s
-      lastSentAt = now;
-      safeSendMessage({ type: 'SYNC_TIME', currentTime: video.currentTime, isPlaying: !video.paused });
-    };
-
-    video.addEventListener('timeupdate', onTimeUpdate);
-
-    // Periodic fallback sync (every 5 seconds) - for passive drift correction
-    window.playbackSyncInterval = setInterval(function syncPlaybackPeriodic() {
-      if (partyActive && video) {
-        safeSendMessage({ type: 'SYNC_TIME', currentTime: video.currentTime, isPlaying: !video.paused });
-      }
-    }, 5000);
-
-    // Save references for teardown
-    window.__toperparty_video_listeners = { onPlay, onPause, onSeeked, onTimeUpdate, video };
-
-    console.log('Playback sync setup complete');
-    
-    // Send initial sync after setup to catch up others (especially after URL change)
-    // Wait a bit for video to initialize
-    setTimeout(function sendInitialSync() {
-      if (partyActive && video && !isFollower()) {
-        console.log('Sending initial sync after video setup');
-        safeSendMessage({ type: 'SYNC_TIME', currentTime: video.currentTime, isPlaying: !video.paused });
-      }
-    }, 2000);
-  }).catch(function onVideoWaitError(err) {
-    console.error('Error waiting for video element:', err);
-  });
-}
-
-// Teardown playback synchronization
-function teardownPlaybackSync() {
-  if (window.playbackSyncInterval) {
-    clearInterval(window.playbackSyncInterval);
-    window.playbackSyncInterval = null;
-  }
-  // Remove listeners attached to the video element
-  const refs = window.__toperparty_video_listeners;
-  if (refs && refs.video) {
-    try {
-      refs.video.removeEventListener('play', refs.onPlay);
-      refs.video.removeEventListener('pause', refs.onPause);
-      refs.video.removeEventListener('seeked', refs.onSeeked);
-      refs.video.removeEventListener('timeupdate', refs.onTimeUpdate);
-    } catch (e) {
-      // ignore
-    }
-  }
-  window.__toperparty_video_listeners = null;
-}
-
-// Inject play/pause controls into page
-function injectControls() {
-  if (document.getElementById('netflix-party-controls')) {
-    return; // Already injected
-  }
-
-  const controlsDiv = document.createElement('div');
-  controlsDiv.id = 'netflix-party-controls';
-  controlsDiv.innerHTML = `
-    <style>
-      #netflix-party-controls {
-        position: fixed;
-        bottom: 150px;
-        right: 20px;
-        background: rgba(0, 0, 0, 0.8);
-        border: 2px solid #e50914;
-        border-radius: 8px;
-        padding: 15px;
-        z-index: 10000;
-        font-family: Arial, sans-serif;
-        color: white;
-      }
-      .control-button {
-        background: #e50914;
-        color: white;
-        border: none;
-        padding: 8px 15px;
-        margin: 5px;
-        border-radius: 4px;
-        cursor: pointer;
-        font-weight: bold;
-      }
-      .control-button:hover {
-        background: #bb070f;
-      }
-      .status-text {
-        font-size: 12px;
-        margin: 5px 0;
-      }
-    </style>
-    <div class="status-text">Party Mode Active</div>
-    <button class="control-button" id="play-btn">Play</button>
-    <button class="control-button" id="pause-btn">Pause</button>
-  `;
-
-  document.body.appendChild(controlsDiv);
-
-  // Add event listeners - use Netflix API instead of video element
-  document.getElementById('play-btn')?.addEventListener('click', function() {
-    NetflixPlayer.play().then(function() {
-      console.log('Play button clicked - using Netflix API');
-    });
-  });
-
-  document.getElementById('pause-btn')?.addEventListener('click', function() {
-    NetflixPlayer.pause().then(function() {
-      console.log('Pause button clicked - using Netflix API');
-    });
-  });
-}
+// --- UI Functions (kept in main file for now) ---
 
 function removeInjectedControls() {
-  const el = document.getElementById('netflix-party-controls');
-  if (el) el.remove();
+  const controls = document.getElementById('netflix-party-controls');
+  if (controls) {
+    controls.remove();
+  }
 }
 
-// Create a small local preview video element and attach a media stream to it
 function attachLocalPreview(stream) {
-  if (!stream) return;
+  let localPreviewVideo = uiManager.getLocalPreviewVideo();
   
-  // If preview already exists, just update the stream
-  if (localPreviewVideo && document.body.contains(localPreviewVideo)) {
-    console.log('Updating existing local preview with new stream');
+  // Remove existing preview if any
+  if (localPreviewVideo) {
     try {
-      localPreviewVideo.srcObject = stream;
-      localPreviewVideo.play().catch(function() {});
-    } catch (e) {
-      console.error('Failed to update preview stream:', e);
-    }
-    return;
+      if (localPreviewVideo.srcObject) {
+        localPreviewVideo.srcObject = null;
+      }
+    } catch (e) {}
+    localPreviewVideo.remove();
+    localPreviewVideo = null;
   }
-  
-  // Create new preview element
+
+  // Create new video element for local preview
   const v = document.createElement('video');
   v.id = 'toperparty-local-preview';
   v.autoplay = true;
-  v.muted = true; // mute local preview
+  v.muted = true; // Always mute local preview to avoid feedback
   v.playsInline = true;
   v.style.position = 'fixed';
   v.style.bottom = '20px';
@@ -624,171 +284,96 @@ function attachLocalPreview(stream) {
   v.style.zIndex = 10001;
   v.style.border = '2px solid #e50914';
   v.style.borderRadius = '4px';
-  
-  // Monitor video element events
-  v.onloadedmetadata = function() {
-    console.log('Local preview metadata loaded, videoWidth=', v.videoWidth, 'videoHeight=', v.videoHeight);
-  };
-  v.onplaying = function() {
-    console.log('Local preview playing');
-  };
-  v.onstalled = function() {
-    console.warn('Local preview stalled');
-  };
-  v.onsuspend = function() {
-    console.warn('Local preview suspended');
-  };
-  
+  v.style.transform = 'scaleX(-1)'; // Mirror for natural preview
+
   try {
     v.srcObject = stream;
   } catch (e) {
-    console.error('Failed to set srcObject, trying fallback:', e);
-    // older browsers: createObjectURL fallback
     v.src = URL.createObjectURL(stream);
   }
-  
+
   document.body.appendChild(v);
-  localPreviewVideo = v;
-  
-  try {
-    // Ensure the video element starts playing (muted allows autoplay in most browsers)
-    v.play().catch(function(err) {
-      console.error('Local preview play() failed:', err);
-    });
-  } catch (e) {
-    console.error('Exception calling play():', e);
-  }
+  uiManager.setLocalPreviewVideo(v);
 
-  console.log('Created local preview, tracks=', (stream && stream.getTracks) ? stream.getTracks().length : 0);
-}
-
-function removeLocalPreview() {
-  if (localPreviewVideo) {
-    try {
-      // Do NOT stop the captured stream's tracks here - stopping the preview
-      // element should not stop the camera/mic itself. Clearing the srcObject
-      // prevents the element from holding the stream reference.
-      if (localPreviewVideo.srcObject) {
-        try { localPreviewVideo.srcObject = null; } catch (e) {}
-      }
-    } catch (e) {}
-    try { localPreviewVideo.remove(); } catch (e) {}
-    localPreviewVideo = null;
-  }
-}
-
-// Monitor local stream health and log issues
-let streamMonitorInterval = null;
-function startLocalStreamMonitor(stream) {
-  // Clear any existing monitor
-  if (streamMonitorInterval) {
-    clearInterval(streamMonitorInterval);
-  }
-  
-  let lastFrameCheck = Date.now();
-  let wasLive = true;
-  
-  streamMonitorInterval = setInterval(function() {
-    if (!stream || !localPreviewVideo) {
-      clearInterval(streamMonitorInterval);
-      streamMonitorInterval = null;
-      return;
-    }
-    
-    const tracks = stream.getTracks();
-    const videoTrack = tracks.find(function(t) { return t.kind === 'video'; });
-    
-    if (videoTrack) {
-      const isLive = videoTrack.readyState === 'live' && videoTrack.enabled;
-      
-      // Check if video element is actually playing
-      const videoElement = localPreviewVideo;
-      const isPlaying = videoElement && !videoElement.paused && videoElement.readyState >= 2;
-      
-      if (!isLive && wasLive) {
-        console.error('LOCAL VIDEO TRACK IS NO LONGER LIVE!', 
-          'readyState=', videoTrack.readyState, 
-          'enabled=', videoTrack.enabled,
-          'muted=', videoTrack.muted);
-      }
-      
-      if (!isPlaying && isLive) {
-        console.warn('Local preview element not playing despite live track',
-          'paused=', videoElement.paused,
-          'readyState=', videoElement.readyState,
-          'currentTime=', videoElement.currentTime);
-        // Try to restart playback
-        try {
-          videoElement.play().catch(function(e) {
-            console.error('Failed to restart local preview:', e);
-          });
-        } catch (e) {}
-      }
-      
-      wasLive = isLive;
-    }
-  }, 2000); // Check every 2 seconds
-}
-
-function stopLocalStreamMonitor() {
-  if (streamMonitorInterval) {
-    clearInterval(streamMonitorInterval);
-    streamMonitorInterval = null;
-  }
-}
-
-// Add or replace a track on an RTCPeerConnection to avoid duplicate senders
-function addOrReplaceTrack(pc, track, stream) {
-  try {
-    const kind = track.kind;
-    const sender = pc.getSenders().find(s => s.track && s.track.kind === kind);
-    if (sender) {
-      // replace existing track
-      sender.replaceTrack(track);
-      console.log('Replaced sender track for kind', kind);
-    } else {
-      pc.addTrack(track, stream);
-      console.log('Added sender track for kind', kind);
-    }
-  } catch (e) {
-    console.warn('addOrReplaceTrack failed', e);
-  }
-}
-
-// Wait for the page <video> element to appear (MutationObserver + fallback)
-function waitForVideo(timeoutMs = 10000) {
-  return new Promise((resolve) => {
-    try {
-      const existing = getVideoElement();
-      if (existing) return resolve(existing);
-
-      const root = document.body || document.documentElement || document;
-      let timer = null;
-      const observer = new MutationObserver((mutations, obs) => {
-        const v = getVideoElement();
-        if (v) {
-          if (timer) clearTimeout(timer);
-          try { obs.disconnect(); } catch (e) {}
-          resolve(v);
-        }
-      });
-
-      observer.observe(root, { childList: true, subtree: true });
-
-      timer = setTimeout(() => {
-        try { observer.disconnect(); } catch (e) {}
-        // final attempt
-        resolve(getVideoElement());
-      }, timeoutMs);
-    } catch (err) {
-      resolve(null);
-    }
+  v.play().catch(function(err) {
+    console.warn('Local preview play() failed (this is usually fine):', err);
   });
 }
 
-// --- WebRTC signaling helpers (content-script side) ---
+function removeLocalPreview() {
+  const localPreviewVideo = uiManager.getLocalPreviewVideo();
+  if (localPreviewVideo) {
+    try {
+      // Stop the tracks managed by this video's srcObject (only if we own them)
+      if (localPreviewVideo.srcObject) {
+        localPreviewVideo.srcObject.getTracks().forEach(function(track) {
+          track.stop();
+        });
+        localPreviewVideo.srcObject = null;
+      }
+    } catch (e) {
+      console.warn('Error stopping local preview tracks:', e);
+    }
+    localPreviewVideo.remove();
+    uiManager.setLocalPreviewVideo(null);
+  }
+}
+
+function startLocalStreamMonitor(stream) {
+  uiManager.clearStreamMonitorInterval();
+  
+  const interval = setInterval(function monitorLocalStream() {
+    if (!stream) {
+      console.warn('Local stream is null, stopping monitor');
+      uiManager.clearStreamMonitorInterval();
+      return;
+    }
+
+    const tracks = stream.getTracks();
+    if (tracks.length === 0) {
+      console.warn('Local stream has no tracks');
+      uiManager.clearStreamMonitorInterval();
+      return;
+    }
+
+    let allActive = true;
+    tracks.forEach(function(track) {
+      if (track.readyState !== 'live') {
+        console.error('Local stream track not live:', track.kind, 'readyState=', track.readyState);
+        allActive = false;
+      }
+    });
+
+    if (!allActive) {
+      console.warn('Some local stream tracks are not active - may need to restart stream');
+    }
+  }, 5000); // Check every 5 seconds
+  
+  uiManager.setStreamMonitorInterval(interval);
+}
+
+function stopLocalStreamMonitor() {
+  uiManager.clearStreamMonitorInterval();
+}
+
+function addOrReplaceTrack(pc, track, stream) {
+  const senders = pc.getSenders();
+  const existingSender = senders.find(s => s.track && s.track.kind === track.kind);
+  if (existingSender) {
+    existingSender.replaceTrack(track).catch(e => console.warn('Error replacing track', e));
+  } else {
+    try {
+      pc.addTrack(track, stream);
+    } catch (e) {
+      console.warn('Error adding track', e);
+    }
+  }
+}
+
+// --- WebRTC signaling helpers ---
+
 function sendSignal(message) {
-  safeSendMessage({ type: 'SIGNAL_SEND', message }, function(resp) {
+  stateManager.safeSendMessage({ type: 'SIGNAL_SEND', message }, function(resp) {
     // optionally handle response
   });
 }
@@ -798,11 +383,12 @@ async function handleSignalingMessage(message) {
   const type = message.type;
   const from = message.userId || message.from;
   const to = message.to;
+  const state = stateManager.getState();
 
   // Ignore messages not for us (if addressed)
-  if (to && to !== userId) return;
+  if (to && to !== state.userId) return;
 
-  if (type === 'JOIN' && from && from !== userId) {
+  if (type === 'JOIN' && from && from !== state.userId) {
     // Another user joined the room — initiate P2P if we have local media
     if (!peerConnections.has(from)) {
       try {
@@ -813,7 +399,7 @@ async function handleSignalingMessage(message) {
         }
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
-        sendSignal({ type: 'OFFER', from: userId, to: from, offer: pc.localDescription });
+        sendSignal({ type: 'OFFER', from: state.userId, to: from, offer: pc.localDescription });
       } catch (err) {
         console.error('Error handling JOIN and creating offer:', err);
         peerConnections.delete(from);
@@ -822,15 +408,15 @@ async function handleSignalingMessage(message) {
     return;
   }
 
-  if (type === 'OFFER' && message.offer && from && from !== userId) {
+  if (type === 'OFFER' && message.offer && from && from !== state.userId) {
     // Received an offer from a peer
     let pc = peerConnections.get(from);
     
     // If connection exists and is not in a good state for receiving an offer, close and recreate
     if (pc) {
-      const state = pc.signalingState;
-      if (state !== 'stable' && state !== 'closed') {
-        console.warn('Received offer while in signaling state:', state, '- recreating connection');
+      const pcState = pc.signalingState;
+      if (pcState !== 'stable' && pcState !== 'closed') {
+        console.warn('Received offer while in signaling state:', pcState, '- recreating connection');
         try {
           pc.close();
         } catch (e) {}
@@ -851,7 +437,7 @@ async function handleSignalingMessage(message) {
       }
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
-      sendSignal({ type: 'ANSWER', from: userId, to: from, answer: pc.localDescription });
+      sendSignal({ type: 'ANSWER', from: state.userId, to: from, answer: pc.localDescription });
     } catch (err) {
       console.error('Error handling offer:', err);
       // Clean up failed connection
@@ -861,7 +447,7 @@ async function handleSignalingMessage(message) {
     return;
   }
 
-  if (type === 'ANSWER' && message.answer && from && from !== userId) {
+  if (type === 'ANSWER' && message.answer && from && from !== state.userId) {
     const pc = peerConnections.get(from);
     if (pc) {
       try {
@@ -878,7 +464,7 @@ async function handleSignalingMessage(message) {
     return;
   }
 
-  if (type === 'ICE_CANDIDATE' && message.candidate && from && from !== userId) {
+  if (type === 'ICE_CANDIDATE' && message.candidate && from && from !== state.userId) {
     const pc = peerConnections.get(from);
     if (pc) {
       try {
@@ -904,7 +490,8 @@ async function handleSignalingMessage(message) {
 
 // Attempt to reconnect to a peer
 async function attemptReconnection(peerId) {
-  if (!partyActive || !userId || !roomId) {
+  const state = stateManager.getState();
+  if (!state.partyActive || !state.userId || !state.roomId) {
     console.log('Cannot reconnect - party not active');
     return;
   }
@@ -955,7 +542,7 @@ async function attemptReconnection(peerId) {
       
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      sendSignal({ type: 'OFFER', from: userId, to: peerId, offer: pc.localDescription });
+      sendSignal({ type: 'OFFER', from: state.userId, to: peerId, offer: pc.localDescription });
       
       console.log('Reconnection offer sent to', peerId);
     } catch (err) {
@@ -979,6 +566,7 @@ function clearReconnectionState(peerId) {
 }
 
 function createPeerConnection(peerId) {
+  const state = stateManager.getState();
   const pc = new RTCPeerConnection({
     iceServers: [
       { urls: ['stun:stun.l.google.com:19302'] },
@@ -988,7 +576,7 @@ function createPeerConnection(peerId) {
 
   pc.onicecandidate = (event) => {
     if (event.candidate) {
-      sendSignal({ type: 'ICE_CANDIDATE', from: userId, to: peerId, candidate: event.candidate });
+      sendSignal({ type: 'ICE_CANDIDATE', from: state.userId, to: peerId, candidate: event.candidate });
     }
   };
 
@@ -1109,5 +697,3 @@ function removeRemoteVideo(peerId) {
   // Also clean up the stream reference
   remoteStreams.delete(peerId);
 }
-
-// Done
