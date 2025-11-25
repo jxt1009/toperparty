@@ -69,6 +69,29 @@ function getVideoElement() {
   return document.querySelector('video');
 }
 
+// Check if extension context is still valid
+function isExtensionContextValid() {
+  try {
+    // Try to access chrome.runtime.id - will throw if context is invalidated
+    return chrome.runtime && chrome.runtime.id;
+  } catch (e) {
+    return false;
+  }
+}
+
+// Safely send message to background, handling invalidated context
+function safeSendMessage(message, callback) {
+  if (!isExtensionContextValid()) {
+    console.warn('Extension context invalidated - please reload the page');
+    return;
+  }
+  try {
+    chrome.runtime.sendMessage(message, callback);
+  } catch (e) {
+    console.warn('Failed to send message, extension may have been reloaded:', e.message);
+  }
+}
+
 // Leader lock helpers - prevent control conflicts
 function becomeLeader() {
   currentLeader = userId;
@@ -269,7 +292,7 @@ function setupPlaybackSync() {
       if (partyActive && !ignoringPlaybackEvents && !isFollower()) {
         console.log('Local play event - broadcasting to peers');
         becomeLeader();
-        chrome.runtime.sendMessage({ type: 'PLAY_PAUSE', control: 'play', timestamp: video.currentTime }).catch(function() {});
+        safeSendMessage({ type: 'PLAY_PAUSE', control: 'play', timestamp: video.currentTime });
       } else if (ignoringPlaybackEvents) {
         console.log('Ignoring local play event (triggered by remote)');
       } else if (isFollower()) {
@@ -281,7 +304,7 @@ function setupPlaybackSync() {
       if (partyActive && !ignoringPlaybackEvents && !isFollower()) {
         console.log('Local pause event - broadcasting to peers');
         becomeLeader();
-        chrome.runtime.sendMessage({ type: 'PLAY_PAUSE', control: 'pause', timestamp: video.currentTime }).catch(function() {});
+        safeSendMessage({ type: 'PLAY_PAUSE', control: 'pause', timestamp: video.currentTime });
       } else if (ignoringPlaybackEvents) {
         console.log('Ignoring local pause event (triggered by remote)');
       } else if (isFollower()) {
@@ -297,7 +320,7 @@ function setupPlaybackSync() {
       if (partyActive && !ignoringPlaybackEvents && !isFollower()) {
         console.log('Local seek completed - broadcasting position to peers');
         becomeLeader();
-        chrome.runtime.sendMessage({ type: 'SYNC_TIME', currentTime: video.currentTime, isPlaying: !video.paused }).catch(function() {});
+        safeSendMessage({ type: 'SYNC_TIME', currentTime: video.currentTime, isPlaying: !video.paused });
       } else if (isFollower()) {
         console.log('Suppressing local seek event (following remote leader)');
       }
@@ -312,7 +335,7 @@ function setupPlaybackSync() {
       const now = Date.now();
       if (now - lastSentAt < 1000) return; // throttle to ~1s
       lastSentAt = now;
-      chrome.runtime.sendMessage({ type: 'SYNC_TIME', currentTime: video.currentTime, isPlaying: !video.paused }).catch(function() {});
+      safeSendMessage({ type: 'SYNC_TIME', currentTime: video.currentTime, isPlaying: !video.paused });
     };
 
     video.addEventListener('timeupdate', onTimeUpdate);
@@ -320,7 +343,7 @@ function setupPlaybackSync() {
     // Periodic fallback sync (every 5 seconds)
     window.playbackSyncInterval = setInterval(function syncPlaybackPeriodic() {
       if (partyActive && video && !ignoringPlaybackEvents && !isFollower()) {
-        chrome.runtime.sendMessage({ type: 'SYNC_TIME', currentTime: video.currentTime, isPlaying: !video.paused }).catch(function() {});
+        safeSendMessage({ type: 'SYNC_TIME', currentTime: video.currentTime, isPlaying: !video.paused });
       }
     }, 5000);
 
@@ -366,8 +389,8 @@ function injectControls() {
     <style>
       #netflix-party-controls {
         position: fixed;
-        bottom: 20px;
-        right: 120px;
+        bottom: 150px;
+        right: 20px;
         background: rgba(0, 0, 0, 0.8);
         border: 2px solid #e50914;
         border-radius: 8px;
@@ -614,13 +637,9 @@ function waitForVideo(timeoutMs = 10000) {
 
 // --- WebRTC signaling helpers (content-script side) ---
 function sendSignal(message) {
-  try {
-    chrome.runtime.sendMessage({ type: 'SIGNAL_SEND', message }, (resp) => {
-      // optionally handle response
-    });
-  } catch (e) {
-    console.error('Failed to send signal via background:', e);
-  }
+  safeSendMessage({ type: 'SIGNAL_SEND', message }, function(resp) {
+    // optionally handle response
+  });
 }
 
 async function handleSignalingMessage(message) {
