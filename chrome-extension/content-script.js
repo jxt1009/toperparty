@@ -288,27 +288,24 @@ function setupPlaybackSync() {
     }
 
     // Track play/pause events
+    // Note: play/pause should always be allowed, leader lock only applies to seeking
     const onPlay = function handlePlayEvent() {
-      if (partyActive && !ignoringPlaybackEvents && !isFollower()) {
+      if (partyActive && !ignoringPlaybackEvents) {
         console.log('Local play event - broadcasting to peers');
-        becomeLeader();
+        becomeLeader(); // Take leadership for subsequent seeks
         safeSendMessage({ type: 'PLAY_PAUSE', control: 'play', timestamp: video.currentTime });
       } else if (ignoringPlaybackEvents) {
         console.log('Ignoring local play event (triggered by remote)');
-      } else if (isFollower()) {
-        console.log('Suppressing local play event (following remote leader)');
       }
     };
 
     const onPause = function handlePauseEvent() {
-      if (partyActive && !ignoringPlaybackEvents && !isFollower()) {
+      if (partyActive && !ignoringPlaybackEvents) {
         console.log('Local pause event - broadcasting to peers');
-        becomeLeader();
+        becomeLeader(); // Take leadership for subsequent seeks
         safeSendMessage({ type: 'PLAY_PAUSE', control: 'pause', timestamp: video.currentTime });
       } else if (ignoringPlaybackEvents) {
         console.log('Ignoring local pause event (triggered by remote)');
-      } else if (isFollower()) {
-        console.log('Suppressing local pause event (following remote leader)');
       }
     };
 
