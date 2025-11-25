@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="128" height="128" fill="#0F0F0F"/>
+  
+  <!-- Netflix red border -->
+  <rect width="128" height="128" fill="none" stroke="#E50914" stroke-width="3"/>
+  
+  <!-- Film reel icon -->
+  <circle cx="64" cy="64" r="35" fill="none" stroke="#E50914" stroke-width="3"/>
+  
+  <!-- Play symbol inside -->
+  <polygon points="55,50 55,78 80,64" fill="#E50914"/>
+  
+  <!-- Webcam icon -->
+  <rect x="20" y="100" width="24" height="20" rx="3" fill="#E50914" opacity="0.7"/>
+  <circle cx="32" cy="110" r="8" fill="#0F0F0F"/>
+  
+  <!-- Mic icon -->
+  <rect x="84" y="100" width="24" height="20" rx="3" fill="#E50914" opacity="0.7"/>
+  <path d="M96 105 L96 115" stroke="#0F0F0F" stroke-width="2" stroke-linecap="round"/>
+</svg>
