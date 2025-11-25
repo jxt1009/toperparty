@@ -3,6 +3,7 @@
 let partyActive = false;
 let userId = null;
 let roomId = null;
+let localStream = null;
 
 // Find Netflix video player
 function getVideoElement() {
@@ -11,6 +12,25 @@ function getVideoElement() {
 
 // Listen for messages from background script
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.type === 'REQUEST_MEDIA_STREAM') {
+    // Get media stream for webcam/mic
+    navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 640 }, height: { ideal: 480 } },
+      audio: true
+    })
+      .then((stream) => {
+        localStream = stream;
+        console.log('Media stream obtained in content script');
+        sendResponse({ success: true, message: 'Media stream obtained' });
+      })
+      .catch((err) => {
+        console.error('Failed to get media stream:', err);
+        sendResponse({ success: false, error: err.message });
+      });
+    
+    return true; // Keep channel open for async response
+  }
+
   if (request.type === 'PARTY_STARTED') {
     partyActive = true;
     userId = request.userId;
@@ -25,6 +45,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     userId = null;
     roomId = null;
     teardownPlaybackSync();
+    
+    // Stop media stream
+    if (localStream) {
+      localStream.getTracks().forEach(track => track.stop());
+      localStream = null;
+    }
+    
     console.log('Party stopped');
     sendResponse({ success: true });
   }

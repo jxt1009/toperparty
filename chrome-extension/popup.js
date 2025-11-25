@@ -7,11 +7,6 @@ let status = {
   hasLocalStream: false
 };
 
-// Get background script
-const bg = chrome.runtime.getBackgroundPage
-  ? await chrome.runtime.getBackgroundPage()
-  : null;
-
 // DOM elements
 const statusEl = document.getElementById('status');
 const statusText = document.getElementById('status-text');
@@ -38,11 +33,20 @@ function setupEventListeners() {
   copyRoomBtn.addEventListener('click', copyRoomId);
 }
 
-async function updateStatus() {
+function updateStatus() {
+  console.log('updateStatus called');
   chrome.runtime.sendMessage({ type: 'GET_STATUS' }, (response) => {
+    console.log('GET_STATUS response:', response);
+    if (chrome.runtime.lastError) {
+      console.error('Failed to get status:', chrome.runtime.lastError);
+      return;
+    }
     if (response) {
       status = response;
+      console.log('Status updated:', status);
       updateUI();
+    } else {
+      console.warn('No response from background script');
     }
   });
 }
@@ -53,6 +57,7 @@ function updateUI() {
   if (isConnected) {
     statusEl.className = 'status connected';
     statusText.textContent = '🟢 Connected';
+    controlsSection.classList.remove('hidden');
     startBtn.classList.add('hidden');
     stopBtn.classList.remove('hidden');
     partyInfo.classList.remove('hidden');
@@ -60,17 +65,12 @@ function updateUI() {
     roomDisplay.textContent = roomId;
     userDisplay.textContent = userId;
 
-    // Display local video
-    if (hasLocalStream) {
-      chrome.runtime.getBackgroundPage().then((bg) => {
-        if (bg.localStream) {
-          localVideo.srcObject = bg.localStream;
-        }
-      });
-    }
+    // Display local video (will be set when stream is available)
+    // Note: Local stream is managed by the background script
   } else {
     statusEl.className = 'status disconnected';
     statusText.textContent = '🔴 Disconnected';
+    controlsSection.classList.remove('hidden');
     startBtn.classList.remove('hidden');
     stopBtn.classList.add('hidden');
     partyInfo.classList.add('hidden');
@@ -124,6 +124,9 @@ function copyRoomId() {
 }
 
 function startStatusPolling() {
+  // Initial status check
+  updateStatus();
+  // Then poll every 2 seconds
   setInterval(updateStatus, 2000);
 }
 

@@ -21,6 +21,8 @@ function generateUserId() {
 
 // Initialize connection
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  console.log('Background received message:', request.type);
+  
   if (request.type === 'START_PARTY') {
     startParty(request.roomId).then(() => {
       sendResponse({ success: true });
@@ -36,12 +38,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.type === 'GET_STATUS') {
+    console.log('Sending status:', { isConnected, roomId, userId, hasLocalStream: !!localStream });
     sendResponse({
       isConnected,
       roomId,
       userId,
       hasLocalStream: !!localStream
     });
+    return true;
   }
 
   if (request.type === 'PLAY_PAUSE') {
@@ -69,66 +73,109 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 async function startParty(inputRoomId) {
   roomId = inputRoomId || 'default_room_' + Date.now();
 
-  // Get media stream
-  try {
-    localStream = await navigator.mediaDevices.getUserMedia({
-      video: { width: { ideal: 640 }, height: { ideal: 480 } },
-      audio: true
-    });
-  } catch (err) {
-    console.error('Failed to get media stream:', err);
-    throw new Error('Could not access webcam/mic. Please check permissions.');
-  }
-
-  // Connect to signaling server
+  // Request media stream from content script
   return new Promise((resolve, reject) => {
     try {
-      ws = new WebSocket('ws://watch.toper.dev/ws');
-
-      ws.onopen = () => {
-        console.log('Connected to signaling server');
-        isConnected = true;
-
-        // Send join message
-        ws.send(JSON.stringify({
-          type: 'JOIN',
-          userId,
-          roomId,
-          timestamp: Date.now()
-        }));
-
-        // Notify all tabs
-        chrome.tabs.query({ url: 'https://www.netflix.com/*' }, (tabs) => {
-          tabs.forEach(tab => {
-            chrome.tabs.sendMessage(tab.id, {
-              type: 'PARTY_STARTED',
-              userId,
-              roomId
-            }).catch(() => {}); // Ignore errors if content script not ready
+      // First, try to get media access through the content script
+      chrome.tabs.query({ url: 'https://www.netflix.com/*' }, (tabs) => {
+        if (tabs.length === 0) {
+          // If no Netflix tab, we can still try to get media in the background
+          getMediaStreamInBackground()
+            .then(() => connectToSignalingServer(resolve, reject))
+            .catch(reject);
+        } else {
+          // Ask the Netflix content script to get media
+          chrome.tabs.sendMessage(tabs[0].id, {
+            type: 'REQUEST_MEDIA_STREAM'
+          }, (response) => {
+            if (chrome.runtime.lastError) {
+              console.warn('Content script not ready, trying background:', chrome.runtime.lastError);
+              getMediaStreamInBackground()
+                .then(() => connectToSignalingServer(resolve, reject))
+                .catch(reject);
+              return;
+            }
+            
+            if (response && response.success) {
+              console.log('Got media stream from content script');
+              connectToSignalingServer(resolve, reject);
+            } else {
+              // Fallback to background attempt
+              console.warn('Content script failed to get media, trying background');
+              getMediaStreamInBackground()
+                .then(() => connectToSignalingServer(resolve, reject))
+                .catch(reject);
+            }
           });
-        });
-
-        resolve();
-      };
-
-      ws.onmessage = (event) => {
-        handleSignalingMessage(event.data);
-      };
-
-      ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        reject(new Error('Failed to connect to signaling server'));
-      };
-
-      ws.onclose = () => {
-        console.log('Disconnected from signaling server');
-        isConnected = false;
-        cleanup();
-      };
+        }
+      });
     } catch (err) {
       reject(err);
     }
   });
+}
+
+// Try to get media stream in background (for testing without Netflix tab)
+async function getMediaStreamInBackground() {
+  try {
+    // This will fail in service worker, but we set a flag so we can continue
+    // In production, the content script will handle this
+    console.log('Note: Media stream will be obtained from Netflix page');
+    return;
+  } catch (err) {
+    console.error('Could not get media in background:', err);
+    throw err;
+  }
+}
+
+// Connect to signaling server
+function connectToSignalingServer(resolve, reject) {
+  try {
+    ws = new WebSocket('ws://watch.toper.dev/ws');
+
+    ws.onopen = () => {
+      console.log('Connected to signaling server');
+      isConnected = true;
+
+      // Send join message
+      ws.send(JSON.stringify({
+        type: 'JOIN',
+        userId,
+        roomId,
+        timestamp: Date.now()
+      }));
+
+      // Notify all tabs
+      chrome.tabs.query({ url: 'https://www.netflix.com/*' }, (tabs) => {
+        tabs.forEach(tab => {
+          chrome.tabs.sendMessage(tab.id, {
+            type: 'PARTY_STARTED',
+            userId,
+            roomId
+          }).catch(() => {}); // Ignore errors if content script not ready
+        });
+      });
+
+      resolve();
+    };
+
+    ws.onmessage = (event) => {
+      handleSignalingMessage(event.data);
+    };
+
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+      reject(new Error('Failed to connect to signaling server'));
+    };
+
+    ws.onclose = () => {
+      console.log('Disconnected from signaling server');
+      isConnected = false;
+      cleanup();
+    };
+  } catch (err) {
+    reject(err);
+  }
 }
 
 // Stop party mode

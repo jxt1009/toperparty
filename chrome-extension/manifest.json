@@ -7,8 +7,7 @@
     "activeTab",
     "scripting",
     "webRequest",
-    "tabs",
-    "mediaStream"
+    "tabs"
   ],
   "host_permissions": [
     "https://www.netflix.com/*"
