@@ -325,14 +325,37 @@ class SyncManager {
     
     // Passive sync via timeupdate - send position periodically for drift correction
     let lastSentAt = 0;
+    let lastUserSeekAt = 0; // Track when user last seeked
+    
+    // Track user seeks so passive sync can avoid interfering
+    const originalOnSeeked = onSeeked;
+    const onSeekedWithTracking = () => {
+      // If this was a user action (not suppressed), remember the time
+      if (!this.expectedEvents.has('seeked')) {
+        lastUserSeekAt = Date.now();
+        console.log('[Passive sync] User seek detected - will pause passive sync for 5s');
+      }
+      originalOnSeeked();
+    };
+    
     const onTimeUpdate = () => {
       if (!this.state.isActive()) return;
       
       const now = Date.now();
-      if (now - lastSentAt < 2000) return; // throttle to every 2s
+      
+      // Only send every 5 seconds (be conservative)
+      if (now - lastSentAt < 5000) return;
+      
+      // Don't send if user seeked recently (within 5 seconds)
+      if (now - lastUserSeekAt < 5000) {
+        console.log('[Passive sync] Skipping send - user seeked recently');
+        return;
+      }
+      
       lastSentAt = now;
       
-      // Send passive sync (other clients will decide if they need to correct)
+      // Send our current position for others to sync to
+      console.log('[Passive sync] Broadcasting position:', video.currentTime.toFixed(2), 's');
       this.state.safeSendMessage({ 
         type: 'SYNC_TIME', 
         currentTime: video.currentTime, 
@@ -343,26 +366,16 @@ class SyncManager {
     
     video.addEventListener('play', onPlay);
     video.addEventListener('pause', onPause);
-    video.addEventListener('seeked', onSeeked);
+    video.addEventListener('seeked', onSeekedWithTracking);
     video.addEventListener('timeupdate', onTimeUpdate);
     
     // Save references for teardown
-    this.listeners = { onPlay, onPause, onSeeked, onTimeUpdate, video };
+    this.listeners = { onPlay, onPause, onSeeked: onSeekedWithTracking, onTimeUpdate, video };
   }
   
-  // Periodic fallback sync (every 10 seconds)
+  // No longer needed - we use timeupdate events for passive sync
   startPeriodicSync(video) {
-    this.syncInterval = setInterval(() => {
-      if (!this.state.isActive() || !video) return;
-      
-      const now = Date.now();
-      this.state.safeSendMessage({ 
-        type: 'SYNC_TIME', 
-        currentTime: video.currentTime, 
-        isPlaying: !video.paused,
-        timestamp: now
-      });
-    }, 10000);
+    // Removed - timeupdate does this for us now
   }
   
   // Teardown playback synchronization
@@ -450,15 +463,10 @@ class SyncManager {
   
   // Handle passive sync (drift correction only)
   async handlePassiveSync(currentTime, isPlaying, fromUserId, messageTimestamp) {
-    // DISABLED FOR NOW - Let's get explicit commands working first
-    console.log('[Passive sync] Disabled - use explicit commands only');
-    return;
-    
-    /* 
-    // Ignore stale messages (older than 5 seconds)
+    // Ignore stale messages (older than 3 seconds)
     if (messageTimestamp) {
       const messageAge = Date.now() - messageTimestamp;
-      if (messageAge > 5000) {
+      if (messageAge > 3000) {
         console.log('[Passive sync] Ignoring stale message - age:', (messageAge / 1000).toFixed(1), 's');
         return;
       }
@@ -466,37 +474,41 @@ class SyncManager {
     
     try {
       const localTime = await this.netflix.getCurrentTime();
+      const localPaused = await this.netflix.isPaused();
       const requestedTime = currentTime * 1000; // Convert to ms
       const timeDiff = Math.abs(localTime - requestedTime);
       
-      // Only correct significant drift (>10 seconds)
-      // Passive sync is ONLY for fixing real problems, not micro-adjustments
-      if (timeDiff > 10000) {
-        console.log('[Passive sync] Large drift detected:', (timeDiff / 1000).toFixed(1), 's - correcting');
-        
-        await this.executeWithSuppression(async () => {
-          await this.netflix.seek(requestedTime);
-        });
-      }
+      console.log('[Passive sync] Received position:', currentTime.toFixed(2), 's from', fromUserId);
+      console.log('[Passive sync] Local:', (localTime/1000).toFixed(2), 's | Drift:', (timeDiff/1000).toFixed(2), 's');
       
-      // Sync play/pause state only if significantly out of sync
-      const isPaused = await this.netflix.isPaused();
-      
-      if (isPlaying !== !isPaused) {
-        console.log('[Passive sync] Play/pause state mismatch - correcting');
+      // Only correct drift > 3 seconds (conservative threshold)
+      if (timeDiff > 3000) {
+        console.log('[Passive sync] ⚠️  Drift detected:', (timeDiff / 1000).toFixed(1), 's - correcting');
         
-        await this.executeWithSuppression(async () => {
-          if (isPlaying && isPaused) {
-            await this.netflix.play();
-          } else if (!isPlaying && !isPaused) {
-            await this.netflix.pause();
-          }
-        });
+        // Add expected events
+        this.expectedEvents.add('seeked');
+        if (isPlaying && localPaused) {
+          this.expectedEvents.add('play');
+        } else if (!isPlaying && !localPaused) {
+          this.expectedEvents.add('pause');
+        }
+        
+        await this.netflix.seek(requestedTime);
+        
+        // Sync play/pause state too
+        if (isPlaying && localPaused) {
+          await this.netflix.play();
+        } else if (!isPlaying && !localPaused) {
+          await this.netflix.pause();
+        }
+      } else {
+        console.log('[Passive sync] ✓ In sync - drift within threshold');
       }
     } catch (err) {
       console.error('[Passive sync] Error:', err);
+      // Clean up expected events on error
+      this.expectedEvents.clear();
     }
-    */
   }
 }
 
