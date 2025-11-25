@@ -12,6 +12,10 @@ const remoteStreams = new Map();
 // Flag to prevent infinite play/pause loops
 let ignoringPlaybackEvents = false;
 
+// Leader lock - when someone is actively controlling, others become followers
+let currentLeader = null; // userId of current leader
+let leaderLockTimeout = null;
+
 // Inject Netflix API access script into page context
 (function injectNetflixAPIHelper() {
   const script = document.createElement('script');
@@ -63,6 +67,37 @@ const NetflixPlayer = {
 // Find Netflix video player (fallback for monitoring)
 function getVideoElement() {
   return document.querySelector('video');
+}
+
+// Leader lock helpers - prevent control conflicts
+function becomeLeader() {
+  currentLeader = userId;
+  if (leaderLockTimeout) clearTimeout(leaderLockTimeout);
+  // Hold leadership for 2 seconds after last action
+  leaderLockTimeout = setTimeout(function() {
+    currentLeader = null;
+    console.log('Leadership released');
+  }, 2000);
+  console.log('Became leader - others will follow for 2s');
+}
+
+function setRemoteLeader(remoteUserId) {
+  if (currentLeader !== remoteUserId) {
+    console.log('Remote user', remoteUserId, 'became leader');
+  }
+  currentLeader = remoteUserId;
+  if (leaderLockTimeout) clearTimeout(leaderLockTimeout);
+  // Auto-release remote leadership after 2.5s of inactivity
+  leaderLockTimeout = setTimeout(function() {
+    if (currentLeader === remoteUserId) {
+      currentLeader = null;
+      console.log('Remote leadership expired');
+    }
+  }, 2500);
+}
+
+function isFollower() {
+  return currentLeader !== null && currentLeader !== userId;
 }
 
 // Listen for messages from background script
@@ -162,6 +197,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.type === 'APPLY_PLAYBACK_CONTROL') {
+    // Set remote user as leader
+    if (request.fromUserId) {
+      setRemoteLeader(request.fromUserId);
+    }
+    
     // Ignore our own play/pause events for a short time to prevent loops
     ignoringPlaybackEvents = true;
     setTimeout(function() { ignoringPlaybackEvents = false; }, 500);
@@ -179,6 +219,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.type === 'APPLY_SYNC_PLAYBACK') {
+    // Set remote user as leader
+    if (request.fromUserId) {
+      setRemoteLeader(request.fromUserId);
+    }
+    
     // Ignore our own play/pause events for a short time to prevent loops
     ignoringPlaybackEvents = true;
     setTimeout(function() { ignoringPlaybackEvents = false; }, 500);
@@ -217,20 +262,26 @@ function setupPlaybackSync() {
 
     // Track play/pause events
     const onPlay = function handlePlayEvent() {
-      if (partyActive && !ignoringPlaybackEvents) {
+      if (partyActive && !ignoringPlaybackEvents && !isFollower()) {
         console.log('Local play event - broadcasting to peers');
+        becomeLeader();
         chrome.runtime.sendMessage({ type: 'PLAY_PAUSE', control: 'play', timestamp: video.currentTime }).catch(function() {});
       } else if (ignoringPlaybackEvents) {
         console.log('Ignoring local play event (triggered by remote)');
+      } else if (isFollower()) {
+        console.log('Suppressing local play event (following remote leader)');
       }
     };
 
     const onPause = function handlePauseEvent() {
-      if (partyActive && !ignoringPlaybackEvents) {
+      if (partyActive && !ignoringPlaybackEvents && !isFollower()) {
         console.log('Local pause event - broadcasting to peers');
+        becomeLeader();
         chrome.runtime.sendMessage({ type: 'PLAY_PAUSE', control: 'pause', timestamp: video.currentTime }).catch(function() {});
       } else if (ignoringPlaybackEvents) {
         console.log('Ignoring local pause event (triggered by remote)');
+      } else if (isFollower()) {
+        console.log('Suppressing local pause event (following remote leader)');
       }
     };
 
@@ -239,9 +290,12 @@ function setupPlaybackSync() {
 
     // Track seeking events to broadcast manual scrubbing
     const onSeeked = function handleSeekedEvent() {
-      if (partyActive && !ignoringPlaybackEvents) {
+      if (partyActive && !ignoringPlaybackEvents && !isFollower()) {
         console.log('Local seek completed - broadcasting position to peers');
+        becomeLeader();
         chrome.runtime.sendMessage({ type: 'SYNC_TIME', currentTime: video.currentTime, isPlaying: !video.paused }).catch(function() {});
+      } else if (isFollower()) {
+        console.log('Suppressing local seek event (following remote leader)');
       }
     };
     
@@ -250,7 +304,7 @@ function setupPlaybackSync() {
     // Throttled timeupdate sender (every ~1s at most)
     let lastSentAt = 0;
     const onTimeUpdate = function handleTimeUpdate() {
-      if (!partyActive || ignoringPlaybackEvents) return;
+      if (!partyActive || ignoringPlaybackEvents || isFollower()) return;
       const now = Date.now();
       if (now - lastSentAt < 1000) return; // throttle to ~1s
       lastSentAt = now;
@@ -261,7 +315,7 @@ function setupPlaybackSync() {
 
     // Periodic fallback sync (every 5 seconds)
     window.playbackSyncInterval = setInterval(function syncPlaybackPeriodic() {
-      if (partyActive && video && !ignoringPlaybackEvents) {
+      if (partyActive && video && !ignoringPlaybackEvents && !isFollower()) {
         chrome.runtime.sendMessage({ type: 'SYNC_TIME', currentTime: video.currentTime, isPlaying: !video.paused }).catch(function() {});
       }
     }, 5000);
@@ -309,7 +363,7 @@ function injectControls() {
       #netflix-party-controls {
         position: fixed;
         bottom: 20px;
-        right: 20px;
+        right: 120px;
         background: rgba(0, 0, 0, 0.8);
         border: 2px solid #e50914;
         border-radius: 8px;
@@ -337,8 +391,8 @@ function injectControls() {
       }
     </style>
     <div class="status-text">Party Mode Active</div>
-    <button class="control-button" id="play-btn">Γû╢ Play</button>
-    <button class="control-button" id="pause-btn">ΓÅ╕ Pause</button>
+    <button class="control-button" id="play-btn">Play</button>
+    <button class="control-button" id="pause-btn">Pause</button>
   `;
 
   document.body.appendChild(controlsDiv);

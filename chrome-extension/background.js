@@ -246,7 +246,12 @@ async function handleSignalingMessage(data) {
     if (message.type === 'PLAYBACK_CONTROL' && message.userId !== userId) {
       chrome.tabs.query({ url: 'https://www.netflix.com/*' }, (tabs) => {
         tabs.forEach(tab => {
-          chrome.tabs.sendMessage(tab.id, { type: 'APPLY_PLAYBACK_CONTROL', control: message.control, timestamp: message.timestamp }).catch(() => {});
+          chrome.tabs.sendMessage(tab.id, { 
+            type: 'APPLY_PLAYBACK_CONTROL', 
+            control: message.control, 
+            timestamp: message.timestamp,
+            fromUserId: message.userId 
+          }).catch(() => {});
         });
       });
     }
@@ -254,7 +259,12 @@ async function handleSignalingMessage(data) {
     if (message.type === 'SYNC_PLAYBACK' && message.userId !== userId) {
       chrome.tabs.query({ url: 'https://www.netflix.com/*' }, (tabs) => {
         tabs.forEach(tab => {
-          chrome.tabs.sendMessage(tab.id, { type: 'APPLY_SYNC_PLAYBACK', currentTime: message.currentTime, isPlaying: message.isPlaying }).catch(() => {});
+          chrome.tabs.sendMessage(tab.id, { 
+            type: 'APPLY_SYNC_PLAYBACK', 
+            currentTime: message.currentTime, 
+            isPlaying: message.isPlaying,
+            fromUserId: message.userId 
+          }).catch(() => {});
         });
       });
     }
