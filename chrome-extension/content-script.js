@@ -180,8 +180,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     // Setup playback sync, then attempt to restore prior playback state (if any)
     Promise.resolve(syncManager.setup())
       .then(() => {
-        // Mark a programmatic seek time so SyncManager ignores the initial jump
-        syncManager.lastProgrammaticSeekAt = Date.now();
         tryRestorePlaybackState();
       })
       .catch((err) => {
