@@ -1,4 +1,5 @@
 // sync-manager.js - Handles playback synchronization
+// Rebuilt with simple, reliable logic to prevent feedback loops
 
 export class SyncManager {
   constructor(stateManager, netflixController) {
@@ -6,6 +7,7 @@ export class SyncManager {
     this.netflix = netflixController;
     this.listeners = null;
     this.syncInterval = null;
+    this.suppressBroadcast = false; // Flag to suppress broadcasting when we control video programmatically
   }
   
   // Setup playback synchronization
@@ -19,7 +21,6 @@ export class SyncManager {
       
       this.attachEventListeners(video);
       this.startPeriodicSync(video);
-      this.sendInitialSync(video);
       
       console.log('Playback sync setup complete');
     } catch (err) {
@@ -47,57 +48,76 @@ export class SyncManager {
   
   // Attach event listeners to video element
   attachEventListeners(video) {
-    // Play event - always broadcast unless it's an echo
+    // Play event - broadcast to peers ONLY if it's a user action
     const onPlay = () => {
       if (!this.state.isActive()) return;
-      if (this.state.isEcho('play')) return;
       
-      console.log('Local play - broadcasting to peers');
-      this.state.recordLocalAction('play');
-      this.state.safeSendMessage({ type: 'PLAY_PAUSE', control: 'play', timestamp: video.currentTime });
+      // If we're programmatically controlling, don't broadcast
+      if (this.suppressBroadcast) {
+        console.log('[Play event] Suppressed - programmatic control');
+        return;
+      }
+      
+      console.log('[Play event] User action - broadcasting to peers');
+      this.state.safeSendMessage({ 
+        type: 'PLAY_PAUSE', 
+        control: 'play', 
+        timestamp: video.currentTime 
+      });
     };
     
-    // Pause event - always broadcast unless it's an echo
+    // Pause event - broadcast to peers ONLY if it's a user action
     const onPause = () => {
       if (!this.state.isActive()) return;
-      if (this.state.isEcho('pause')) return;
       
-      console.log('Local pause - broadcasting to peers');
-      this.state.recordLocalAction('pause');
-      this.state.safeSendMessage({ type: 'PLAY_PAUSE', control: 'pause', timestamp: video.currentTime });
+      // If we're programmatically controlling, don't broadcast
+      if (this.suppressBroadcast) {
+        console.log('[Pause event] Suppressed - programmatic control');
+        return;
+      }
+      
+      console.log('[Pause event] User action - broadcasting to peers');
+      this.state.safeSendMessage({ 
+        type: 'PLAY_PAUSE', 
+        control: 'pause', 
+        timestamp: video.currentTime 
+      });
     };
     
-    // Seek event - always broadcast unless it's an echo
+    // Seek event - broadcast to peers ONLY if it's a user action
     const onSeeked = () => {
       if (!this.state.isActive()) return;
-      if (this.state.isEcho('seek')) return;
       
-      console.log('Local seek to', video.currentTime, '- broadcasting to peers');
-      this.state.recordLocalAction('seek');
-      this.state.safeSendMessage({ type: 'SEEK', currentTime: video.currentTime, isPlaying: !video.paused });
+      // If we're programmatically controlling, don't broadcast
+      if (this.suppressBroadcast) {
+        console.log('[Seeked event] Suppressed - programmatic control');
+        return;
+      }
+      
+      console.log('[Seeked event] User action - broadcasting to peers');
+      this.state.safeSendMessage({ 
+        type: 'SEEK', 
+        currentTime: video.currentTime, 
+        isPlaying: !video.paused 
+      });
     };
     
-    // Throttled timeupdate sender (passive drift correction)
+    // Passive sync via timeupdate - send position periodically for drift correction
     let lastSentAt = 0;
     const onTimeUpdate = () => {
       if (!this.state.isActive()) return;
       
-      // Don't send passive sync right after a local OR remote seek - prevents sending stale position
-      const timeSinceLocalAction = this.state.getTimeSinceLocalAction();
-      const timeSinceRemoteAction = this.state.getTimeSinceRemoteAction();
-      
-      if (this.state.lastLocalAction.type === 'seek' && timeSinceLocalAction < 6000) {
-        return; // Suppress passive sync for 6s after local seek
-      }
-      
-      if (this.state.lastRemoteAction.type === 'seek' && timeSinceRemoteAction < 6000) {
-        return; // Suppress passive sync for 6s after remote seek
-      }
-      
       const now = Date.now();
-      if (now - lastSentAt < 1000) return; // throttle to ~1s
+      if (now - lastSentAt < 2000) return; // throttle to every 2s
       lastSentAt = now;
-      this.state.safeSendMessage({ type: 'SYNC_TIME', currentTime: video.currentTime, isPlaying: !video.paused, timestamp: now });
+      
+      // Send passive sync (other clients will decide if they need to correct)
+      this.state.safeSendMessage({ 
+        type: 'SYNC_TIME', 
+        currentTime: video.currentTime, 
+        isPlaying: !video.paused,
+        timestamp: now
+      });
     };
     
     video.addEventListener('play', onPlay);
@@ -109,36 +129,19 @@ export class SyncManager {
     this.listeners = { onPlay, onPause, onSeeked, onTimeUpdate, video };
   }
   
-  // Periodic fallback sync (every 5 seconds)
+  // Periodic fallback sync (every 10 seconds)
   startPeriodicSync(video) {
     this.syncInterval = setInterval(() => {
       if (!this.state.isActive() || !video) return;
       
-      // Don't send passive sync right after a local OR remote seek - prevents sending stale position
-      const timeSinceLocalAction = this.state.getTimeSinceLocalAction();
-      const timeSinceRemoteAction = this.state.getTimeSinceRemoteAction();
-      
-      if (this.state.lastLocalAction.type === 'seek' && timeSinceLocalAction < 6000) {
-        return; // Suppress passive sync for 6s after local seek
-      }
-      
-      if (this.state.lastRemoteAction.type === 'seek' && timeSinceRemoteAction < 6000) {
-        return; // Suppress passive sync for 6s after remote seek
-      }
-      
       const now = Date.now();
-      this.state.safeSendMessage({ type: 'SYNC_TIME', currentTime: video.currentTime, isPlaying: !video.paused, timestamp: now });
-    }, 5000);
-  }
-  
-  // Send initial sync after setup
-  sendInitialSync(video) {
-    setTimeout(() => {
-      if (this.state.isActive() && video) {
-        console.log('Sending initial sync after video setup');
-        this.state.safeSendMessage({ type: 'SYNC_TIME', currentTime: video.currentTime, isPlaying: !video.paused });
-      }
-    }, 2000);
+      this.state.safeSendMessage({ 
+        type: 'SYNC_TIME', 
+        currentTime: video.currentTime, 
+        isPlaying: !video.paused,
+        timestamp: now
+      });
+    }, 10000);
   }
   
   // Teardown playback synchronization
@@ -162,121 +165,98 @@ export class SyncManager {
     }
   }
   
-  // Handle remote playback control commands
-  async handlePlaybackControl(control, fromUserId) {
-    console.log('Applying remote', control, 'command from', fromUserId);
-    this.state.recordRemoteAction(control);
-    
+  // Execute an action with broadcast suppression
+  async executeWithSuppression(actionFn) {
+    this.suppressBroadcast = true;
     try {
-      if (control === 'play') {
-        this.state.recordLocalAction('play'); // Record BEFORE play to prevent echo
-        await this.netflix.play();
-        console.log('Remote play completed');
-      } else if (control === 'pause') {
-        this.state.recordLocalAction('pause'); // Record BEFORE pause to prevent echo
-        await this.netflix.pause();
-        console.log('Remote pause completed');
-      }
-    } catch (err) {
-      console.error('Failed to apply remote', control, ':', err);
+      await actionFn();
+    } finally {
+      // Keep suppression for a brief moment to ensure all events are caught
+      setTimeout(() => {
+        this.suppressBroadcast = false;
+      }, 100);
     }
   }
   
-  // Handle remote seek commands
+  // Handle remote playback control commands (explicit play/pause)
+  async handlePlaybackControl(control, fromUserId) {
+    console.log('[Remote command] Applying', control, 'from', fromUserId);
+    
+    await this.executeWithSuppression(async () => {
+      if (control === 'play') {
+        await this.netflix.play();
+        console.log('[Remote command] Play completed');
+      } else if (control === 'pause') {
+        await this.netflix.pause();
+        console.log('[Remote command] Pause completed');
+      }
+    });
+  }
+  
+  // Handle remote seek commands (explicit seek)
   async handleSeek(currentTime, isPlaying, fromUserId) {
-    console.log('Applying remote SEEK to', currentTime, 's from', fromUserId);
-    this.state.recordRemoteAction('seek');
+    console.log('[Remote command] Applying SEEK to', currentTime, 's from', fromUserId);
     
     const requestedTime = currentTime * 1000; // Convert to ms
     
-    try {
-      this.state.recordLocalAction('seek'); // Record BEFORE seek to prevent echo
+    await this.executeWithSuppression(async () => {
       await this.netflix.seek(requestedTime);
-      console.log('Remote seek completed');
+      console.log('[Remote command] Seek completed');
       
       // Also sync play/pause state
       const isPaused = await this.netflix.isPaused();
       if (isPlaying && isPaused) {
-        this.state.recordLocalAction('play'); // Record BEFORE play to prevent echo
         await this.netflix.play();
+        console.log('[Remote command] Resumed after seek');
       } else if (!isPlaying && !isPaused) {
-        this.state.recordLocalAction('pause'); // Record BEFORE pause to prevent echo
         await this.netflix.pause();
+        console.log('[Remote command] Paused after seek');
       }
-    } catch (err) {
-      console.error('Failed to apply remote seek:', err);
-    }
+    });
   }
   
-  // Handle passive sync (drift correction)
+  // Handle passive sync (drift correction only)
   async handlePassiveSync(currentTime, isPlaying, fromUserId, messageTimestamp) {
-    try {
-      // Reject stale passive sync messages (older than 3 seconds)
-      if (messageTimestamp) {
-        const messageAge = Date.now() - messageTimestamp;
-        if (messageAge > 3000) {
-          console.log('Ignoring stale passive sync message - age:', messageAge, 'ms');
-          return;
-        }
+    // Ignore stale messages (older than 5 seconds)
+    if (messageTimestamp) {
+      const messageAge = Date.now() - messageTimestamp;
+      if (messageAge > 5000) {
+        console.log('[Passive sync] Ignoring stale message - age:', (messageAge / 1000).toFixed(1), 's');
+        return;
       }
-      
+    }
+    
+    try {
       const localTime = await this.netflix.getCurrentTime();
       const requestedTime = currentTime * 1000; // Convert to ms
       const timeDiff = Math.abs(localTime - requestedTime);
       
-      // Check if we just did a local action - don't override it
-      const timeSinceLocalAction = this.state.getTimeSinceLocalAction();
-      const timeSinceRemoteAction = this.state.getTimeSinceRemoteAction();
-      const lastActionType = this.state.lastLocalAction.type;
-      const lastRemoteActionType = this.state.lastRemoteAction.type;
-      
-      // Very long protection window after explicit seeks to prevent ANY passive sync interference
-      if (lastActionType === 'seek' && timeSinceLocalAction < 6000) {
-        console.log('Ignoring passive sync - recent local seek:', timeSinceLocalAction, 'ms ago');
-        return;
+      // Only correct significant drift (>10 seconds)
+      // Passive sync is ONLY for fixing real problems, not micro-adjustments
+      if (timeDiff > 10000) {
+        console.log('[Passive sync] Large drift detected:', (timeDiff / 1000).toFixed(1), 's - correcting');
+        
+        await this.executeWithSuppression(async () => {
+          await this.netflix.seek(requestedTime);
+        });
       }
       
-      if (lastRemoteActionType === 'seek' && timeSinceRemoteAction < 6000) {
-        console.log('Ignoring passive sync - recent remote seek:', timeSinceRemoteAction, 'ms ago');
-        return;
-      }
-      
-      // Standard protection for other actions
-      if (timeSinceLocalAction < 2000) {
-        console.log('Ignoring passive sync - recent local action:', lastActionType, timeSinceLocalAction, 'ms ago');
-        return;
-      }
-      
-      // MUCH higher threshold - passive sync is ONLY for fixing real drift, not normal playback differences
-      // Increased to 5 seconds to avoid interfering with seeks
-      if (timeDiff > 5000) {
-        console.log('Passive sync: diff was', (timeDiff / 1000).toFixed(1), 's - correcting');
-        this.state.recordLocalAction('seek'); // Record BEFORE seek to prevent echo
-        await this.netflix.seek(requestedTime);
-      }
-      
-      // Handle play/pause state sync - but with stricter checks
+      // Sync play/pause state only if significantly out of sync
       const isPaused = await this.netflix.isPaused();
       
-      // Only sync play/pause if there's been no local play/pause action recently (3 seconds)
-      if (lastActionType === 'play' || lastActionType === 'pause') {
-        if (timeSinceLocalAction < 3000) {
-          console.log('Ignoring passive play/pause sync - recent local', lastActionType, timeSinceLocalAction, 'ms ago');
-          return;
-        }
-      }
-      
-      if (isPlaying && isPaused) {
-        console.log('Passive sync: resuming playback');
-        this.state.recordLocalAction('play'); // Record BEFORE play to prevent echo
-        await this.netflix.play();
-      } else if (!isPlaying && !isPaused) {
-        console.log('Passive sync: pausing playback');
-        this.state.recordLocalAction('pause'); // Record BEFORE pause to prevent echo
-        await this.netflix.pause();
+      if (isPlaying !== !isPaused) {
+        console.log('[Passive sync] Play/pause state mismatch - correcting');
+        
+        await this.executeWithSuppression(async () => {
+          if (isPlaying && isPaused) {
+            await this.netflix.play();
+          } else if (!isPlaying && !isPaused) {
+            await this.netflix.pause();
+          }
+        });
       }
     } catch (err) {
-      console.error('Error handling passive sync:', err);
+      console.error('[Passive sync] Error:', err);
     }
   }
 }
