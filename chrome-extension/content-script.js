@@ -9,7 +9,102 @@ const peerConnections = new Map();
 const remoteVideos = new Map();
 const remoteStreams = new Map();
 
-// Find Netflix video player
+// Inject Netflix API access script into page context
+(function injectNetflixAPIHelper() {
+  const script = document.createElement('script');
+  script.textContent = `
+    (function() {
+      // Netflix Player API Helper - runs in page context
+      window.__toperparty_netflix = {
+        getPlayer: function() {
+          try {
+            const videoPlayer = window.netflix.appContext.state.playerApp.getAPI().videoPlayer;
+            const sessionId = videoPlayer.getAllPlayerSessionIds()[0];
+            return videoPlayer.getVideoPlayerBySessionId(sessionId);
+          } catch (e) {
+            console.warn('Failed to get Netflix player:', e);
+            return null;
+          }
+        },
+        
+        play: function() {
+          const player = this.getPlayer();
+          if (player) player.play();
+        },
+        
+        pause: function() {
+          const player = this.getPlayer();
+          if (player) player.pause();
+        },
+        
+        seek: function(timeMs) {
+          const player = this.getPlayer();
+          if (player) player.seek(timeMs);
+        },
+        
+        getCurrentTime: function() {
+          const player = this.getPlayer();
+          return player ? player.getCurrentTime() : 0;
+        },
+        
+        isPaused: function() {
+          const player = this.getPlayer();
+          return player ? player.isPaused() : true;
+        }
+      };
+      
+      // Listen for commands from content script
+      document.addEventListener('__toperparty_command', function(e) {
+        const { command, args } = e.detail;
+        if (window.__toperparty_netflix[command]) {
+          const result = window.__toperparty_netflix[command].apply(window.__toperparty_netflix, args || []);
+          document.dispatchEvent(new CustomEvent('__toperparty_response', { detail: { command, result } }));
+        }
+      });
+    })();
+  `;
+  (document.head || document.documentElement).appendChild(script);
+  script.remove();
+})();
+
+// Netflix API wrapper for content script
+const NetflixPlayer = {
+  _sendCommand: function(command, args = []) {
+    return new Promise(function(resolve) {
+      const handler = function(e) {
+        if (e.detail.command === command) {
+          document.removeEventListener('__toperparty_response', handler);
+          resolve(e.detail.result);
+        }
+      };
+      document.addEventListener('__toperparty_response', handler);
+      setTimeout(function() { resolve(null); }, 1000); // timeout fallback
+      document.dispatchEvent(new CustomEvent('__toperparty_command', { detail: { command, args } }));
+    });
+  },
+  
+  play: function() {
+    return this._sendCommand('play');
+  },
+  
+  pause: function() {
+    return this._sendCommand('pause');
+  },
+  
+  seek: function(timeMs) {
+    return this._sendCommand('seek', [timeMs]);
+  },
+  
+  getCurrentTime: function() {
+    return this._sendCommand('getCurrentTime');
+  },
+  
+  isPaused: function() {
+    return this._sendCommand('isPaused');
+  }
+};
+
+// Find Netflix video player (fallback for monitoring)
 function getVideoElement() {
   return document.querySelector('video');
 }
@@ -47,10 +142,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         
         // Create or update local preview
         attachLocalPreview(stream);
-          // add or replace tracks to any existing peer connections
-          peerConnections.forEach((pc) => {
-            try { stream.getTracks().forEach(t => addOrReplaceTrack(pc, t, stream)); } catch (e) { console.warn('Error adding tracks to pc', e); }
-          });
+        
+        // Start monitoring local stream health
+        startLocalStreamMonitor(stream);
+        
+        // add or replace tracks to any existing peer connections
+        peerConnections.forEach((pc) => {
+          try { stream.getTracks().forEach(t => addOrReplaceTrack(pc, t, stream)); } catch (e) { console.warn('Error adding tracks to pc', e); }
+        });
         sendResponse({ success: true, message: 'Media stream obtained' });
       })
       .catch((err) => {
@@ -78,6 +177,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     roomId = null;
     teardownPlaybackSync();
     
+    // Stop stream monitor
+    stopLocalStreamMonitor();
+    
     // Stop media stream
     if (localStream) {
       localStream.getTracks().forEach(track => track.stop());
@@ -104,32 +206,38 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.type === 'APPLY_PLAYBACK_CONTROL') {
-    const video = getVideoElement();
-    if (video) {
-      if (request.control === 'play') {
-        video.play().catch(err => console.error('Failed to play:', err));
-      } else if (request.control === 'pause') {
-        video.pause();
-      }
+    if (request.control === 'play') {
+      NetflixPlayer.play().then(function() {
+        console.log('Netflix player play command sent');
+      });
+    } else if (request.control === 'pause') {
+      NetflixPlayer.pause().then(function() {
+        console.log('Netflix player pause command sent');
+      });
     }
     sendResponse({ success: true });
   }
 
   if (request.type === 'APPLY_SYNC_PLAYBACK') {
-    const video = getVideoElement();
-    if (video) {
+    // Get current time from Netflix API
+    NetflixPlayer.getCurrentTime().then(function(currentTime) {
+      const requestedTime = request.currentTime * 1000; // Convert to ms
+      const timeDiff = Math.abs(currentTime - requestedTime);
+      
       // Only sync if times differ significantly (avoid constant micro-adjustments)
-      const timeDiff = Math.abs(video.currentTime - request.currentTime);
-      if (timeDiff > 0.5) { // 500ms threshold
-        video.currentTime = request.currentTime;
+      if (timeDiff > 500) { // 500ms threshold
+        NetflixPlayer.seek(requestedTime);
       }
-
-      if (request.isPlaying && video.paused) {
-        video.play().catch(err => console.error('Failed to play:', err));
-      } else if (!request.isPlaying && !video.paused) {
-        video.pause();
-      }
-    }
+      
+      // Handle play/pause state
+      NetflixPlayer.isPaused().then(function(isPaused) {
+        if (request.isPlaying && isPaused) {
+          NetflixPlayer.play();
+        } else if (!request.isPlaying && !isPaused) {
+          NetflixPlayer.pause();
+        }
+      });
+    });
     sendResponse({ success: true });
   }
 });
@@ -254,19 +362,17 @@ function injectControls() {
 
   document.body.appendChild(controlsDiv);
 
-  // Add event listeners
-  document.getElementById('play-btn')?.addEventListener('click', () => {
-    const video = getVideoElement();
-    if (video) {
-      video.play().catch(err => console.error('Failed to play:', err));
-    }
+  // Add event listeners - use Netflix API instead of video element
+  document.getElementById('play-btn')?.addEventListener('click', function() {
+    NetflixPlayer.play().then(function() {
+      console.log('Play button clicked - using Netflix API');
+    });
   });
 
-  document.getElementById('pause-btn')?.addEventListener('click', () => {
-    const video = getVideoElement();
-    if (video) {
-      video.pause();
-    }
+  document.getElementById('pause-btn')?.addEventListener('click', function() {
+    NetflixPlayer.pause().then(function() {
+      console.log('Pause button clicked - using Netflix API');
+    });
   });
 }
 
@@ -277,8 +383,21 @@ function removeInjectedControls() {
 
 // Create a small local preview video element and attach a media stream to it
 function attachLocalPreview(stream) {
-  removeLocalPreview();
   if (!stream) return;
+  
+  // If preview already exists, just update the stream
+  if (localPreviewVideo && document.body.contains(localPreviewVideo)) {
+    console.log('Updating existing local preview with new stream');
+    try {
+      localPreviewVideo.srcObject = stream;
+      localPreviewVideo.play().catch(function() {});
+    } catch (e) {
+      console.error('Failed to update preview stream:', e);
+    }
+    return;
+  }
+  
+  // Create new preview element
   const v = document.createElement('video');
   v.id = 'toperparty-local-preview';
   v.autoplay = true;
@@ -292,30 +411,42 @@ function attachLocalPreview(stream) {
   v.style.zIndex = 10001;
   v.style.border = '2px solid #e50914';
   v.style.borderRadius = '4px';
+  
+  // Monitor video element events
+  v.onloadedmetadata = function() {
+    console.log('Local preview metadata loaded, videoWidth=', v.videoWidth, 'videoHeight=', v.videoHeight);
+  };
+  v.onplaying = function() {
+    console.log('Local preview playing');
+  };
+  v.onstalled = function() {
+    console.warn('Local preview stalled');
+  };
+  v.onsuspend = function() {
+    console.warn('Local preview suspended');
+  };
+  
   try {
     v.srcObject = stream;
   } catch (e) {
+    console.error('Failed to set srcObject, trying fallback:', e);
     // older browsers: createObjectURL fallback
     v.src = URL.createObjectURL(stream);
   }
+  
   document.body.appendChild(v);
   localPreviewVideo = v;
+  
   try {
     // Ensure the video element starts playing (muted allows autoplay in most browsers)
-    v.play().catch(() => {});
-  } catch (e) {}
+    v.play().catch(function(err) {
+      console.error('Local preview play() failed:', err);
+    });
+  } catch (e) {
+    console.error('Exception calling play():', e);
+  }
 
-  // Log track states and attach ended listeners for debugging
-  try {
-    if (stream && stream.getTracks) {
-      stream.getTracks().forEach((t) => {
-        console.log('Local track:', t.kind, 'readyState=', t.readyState);
-        t.onended = () => console.warn('Local track ended:', t.kind);
-      });
-    }
-  } catch (e) {}
-
-  console.log('Attached local preview, tracks=', (stream && stream.getTracks) ? stream.getTracks().length : 0);
+  console.log('Created local preview, tracks=', (stream && stream.getTracks) ? stream.getTracks().length : 0);
 }
 
 function removeLocalPreview() {
@@ -330,6 +461,66 @@ function removeLocalPreview() {
     } catch (e) {}
     try { localPreviewVideo.remove(); } catch (e) {}
     localPreviewVideo = null;
+  }
+}
+
+// Monitor local stream health and log issues
+let streamMonitorInterval = null;
+function startLocalStreamMonitor(stream) {
+  // Clear any existing monitor
+  if (streamMonitorInterval) {
+    clearInterval(streamMonitorInterval);
+  }
+  
+  let lastFrameCheck = Date.now();
+  let wasLive = true;
+  
+  streamMonitorInterval = setInterval(function() {
+    if (!stream || !localPreviewVideo) {
+      clearInterval(streamMonitorInterval);
+      streamMonitorInterval = null;
+      return;
+    }
+    
+    const tracks = stream.getTracks();
+    const videoTrack = tracks.find(function(t) { return t.kind === 'video'; });
+    
+    if (videoTrack) {
+      const isLive = videoTrack.readyState === 'live' && videoTrack.enabled;
+      
+      // Check if video element is actually playing
+      const videoElement = localPreviewVideo;
+      const isPlaying = videoElement && !videoElement.paused && videoElement.readyState >= 2;
+      
+      if (!isLive && wasLive) {
+        console.error('LOCAL VIDEO TRACK IS NO LONGER LIVE!', 
+          'readyState=', videoTrack.readyState, 
+          'enabled=', videoTrack.enabled,
+          'muted=', videoTrack.muted);
+      }
+      
+      if (!isPlaying && isLive) {
+        console.warn('Local preview element not playing despite live track',
+          'paused=', videoElement.paused,
+          'readyState=', videoElement.readyState,
+          'currentTime=', videoElement.currentTime);
+        // Try to restart playback
+        try {
+          videoElement.play().catch(function(e) {
+            console.error('Failed to restart local preview:', e);
+          });
+        } catch (e) {}
+      }
+      
+      wasLive = isLive;
+    }
+  }, 2000); // Check every 2 seconds
+}
+
+function stopLocalStreamMonitor() {
+  if (streamMonitorInterval) {
+    clearInterval(streamMonitorInterval);
+    streamMonitorInterval = null;
   }
 }
 
