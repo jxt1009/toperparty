@@ -40,8 +40,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     console.log('Restoring party after navigation:', request.roomId);
     
     // Force a clean slate by stopping any existing party session first (Reset behavior)
+    // Pass false to skip sending LEAVE, as the tab already sent it via beforeunload
+    // and we don't want to race with the new JOIN.
     console.log('Performing full party reset (Stop -> Start) for restoration');
-    stopParty();
+    stopParty(false);
 
     // Use the saved userId instead of generating a new one
     if (request.userId) {
@@ -238,14 +240,20 @@ function connectToSignalingServer(resolve, reject) {
 }
 
 // Stop party mode
-function stopParty() {
+function stopParty(sendLeaveSignal = true) {
   if (ws) {
-    ws.send(JSON.stringify({
-      type: 'LEAVE',
-      userId,
-      roomId,
-      timestamp: Date.now()
-    }));
+    if (sendLeaveSignal) {
+      try {
+        ws.send(JSON.stringify({
+          type: 'LEAVE',
+          userId,
+          roomId,
+          timestamp: Date.now()
+        }));
+      } catch (e) {
+        console.warn('Error sending LEAVE signal:', e);
+      }
+    }
     ws.close();
     ws = null;
   }
