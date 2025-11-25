@@ -195,3 +195,15 @@ seekBtn.onclick = async () => {
     console.warn('Could not get tab state', e);
   }
 };
+document.querySelector("#send").onclick = () => {
+  chrome.runtime.sendMessage({
+    type: "ws-send",
+    data: "hello"
+  });
+};
+
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.type === "ws-message") {
+    console.log("Received:", msg.data);
+  }
+});
