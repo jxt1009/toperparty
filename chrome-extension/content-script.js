@@ -12,6 +12,9 @@ const remoteStreams = new Map();
 // Flag to prevent infinite play/pause loops
 let ignoringPlaybackEvents = false;
 
+// Track last explicit play/pause command to avoid sync overriding it
+let lastPlayPauseCommand = null; // { action: 'play'|'pause', timestamp: Date.now() }
+
 // Leader lock - when someone is actively controlling, others become followers
 let currentLeader = null; // userId of current leader
 let leaderLockTimeout = null;
@@ -225,6 +228,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       setRemoteLeader(request.fromUserId);
     }
     
+    // Track this explicit play/pause command
+    lastPlayPauseCommand = {
+      action: request.control,
+      timestamp: Date.now()
+    };
+    
     // Ignore our own play/pause events for a short time to prevent loops
     ignoringPlaybackEvents = true;
     setTimeout(function() { ignoringPlaybackEvents = false; }, 500);
@@ -265,11 +274,21 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         console.log('Time diff', (timeDiff / 1000).toFixed(1), 's - within acceptable range, not seeking');
       }
       
-      // Handle play/pause state
+      // Handle play/pause state - but don't override recent explicit commands
       NetflixPlayer.isPaused().then(function(isPaused) {
+        const now = Date.now();
+        const recentCommand = lastPlayPauseCommand && (now - lastPlayPauseCommand.timestamp < 3000);
+        
+        if (recentCommand) {
+          console.log('Ignoring sync play/pause state - recent explicit command:', lastPlayPauseCommand.action);
+          return;
+        }
+        
         if (request.isPlaying && isPaused) {
+          console.log('Sync: resuming playback');
           NetflixPlayer.play();
         } else if (!request.isPlaying && !isPaused) {
+          console.log('Sync: pausing playback');
           NetflixPlayer.pause();
         }
       });
