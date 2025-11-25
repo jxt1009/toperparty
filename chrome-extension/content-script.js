@@ -66,18 +66,27 @@ let lastKnownUrl = window.location.href;
 function startUrlMonitoring() {
   const state = stateManager.getState();
   
-  // Save party state and request clean shutdown on hard navigations
+  // Save party state and inform server/peers that THIS tab is leaving on hard navigations
   window.addEventListener('beforeunload', function savePartyStateBeforeUnload() {
     const currentState = stateManager.getState();
     if (currentState.partyActive && currentState.userId && currentState.roomId) {
       // Persist enough info so the refreshed tab can rejoin cleanly
       urlSync.saveState();
-      
-      // Ask background to fully stop the party so peers get a proper LEAVE
+
+      // Send a LEAVE over the signaling channel for this user only, without
+      // stopping the entire party for other tabs.
       try {
-        chrome.runtime.sendMessage({ type: 'STOP_PARTY' });
+        stateManager.safeSendMessage({
+          type: 'SIGNAL_SEND',
+          message: {
+            type: 'LEAVE',
+            userId: currentState.userId,
+            roomId: currentState.roomId,
+            timestamp: Date.now()
+          }
+        });
       } catch (e) {
-        console.warn('Error sending STOP_PARTY on beforeunload:', e);
+        console.warn('Error sending LEAVE on beforeunload:', e);
       }
     }
   });
