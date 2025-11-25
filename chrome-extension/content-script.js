@@ -236,7 +236,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     
     // Ignore our own play/pause events for a short time to prevent loops
     ignoringPlaybackEvents = true;
-    setTimeout(function() { ignoringPlaybackEvents = false; }, 500);
+    console.log('Setting ignoringPlaybackEvents = true for remote command');
+    setTimeout(function() { 
+      ignoringPlaybackEvents = false; 
+      console.log('Reset ignoringPlaybackEvents = false');
+    }, 1000); // Increased to 1s since Netflix API is async
     
     if (request.control === 'play') {
       NetflixPlayer.play().then(function() {
@@ -258,7 +262,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     
     // Ignore our own play/pause events for a short time to prevent loops
     ignoringPlaybackEvents = true;
-    setTimeout(function() { ignoringPlaybackEvents = false; }, 500);
+    console.log('Setting ignoringPlaybackEvents = true for remote sync');
+    setTimeout(function() { 
+      ignoringPlaybackEvents = false; 
+      console.log('Reset ignoringPlaybackEvents = false');
+    }, 1000); // Increased to 1s since Netflix API is async
     
     // Get current time from Netflix API
     NetflixPlayer.getCurrentTime().then(function(currentTime) {
@@ -309,6 +317,7 @@ function setupPlaybackSync() {
     // Track play/pause events
     // Note: play/pause should always be allowed, leader lock only applies to seeking
     const onPlay = function handlePlayEvent() {
+      console.log('onPlay event fired - ignoringPlaybackEvents:', ignoringPlaybackEvents, 'partyActive:', partyActive);
       if (partyActive && !ignoringPlaybackEvents) {
         console.log('Local play event - broadcasting to peers');
         becomeLeader(); // Take leadership for subsequent seeks
@@ -319,6 +328,7 @@ function setupPlaybackSync() {
     };
 
     const onPause = function handlePauseEvent() {
+      console.log('onPause event fired - ignoringPlaybackEvents:', ignoringPlaybackEvents, 'partyActive:', partyActive);
       if (partyActive && !ignoringPlaybackEvents) {
         console.log('Local pause event - broadcasting to peers');
         becomeLeader(); // Take leadership for subsequent seeks
