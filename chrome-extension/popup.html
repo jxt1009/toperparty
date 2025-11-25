@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Netflix Party Sync</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🎬 Netflix Party Sync</h1>
+    </div>
+
+    <div id="status-section" class="section">
+      <div id="status" class="status disconnected">
+        <span id="status-text">Disconnected</span>
+      </div>
+    </div>
+
+    <div id="controls-section" class="section hidden">
+      <input 
+        type="text" 
+        id="room-input" 
+        placeholder="Enter room ID or leave blank" 
+        class="input-field"
+      />
+      <button id="start-btn" class="button primary">Start Party</button>
+      <button id="stop-btn" class="button danger hidden">Stop Party</button>
+    </div>
+
+    <div id="party-info" class="section hidden">
+      <div class="info-item">
+        <span class="label">Room ID:</span>
+        <span id="room-display" class="value"></span>
+        <button id="copy-room-btn" class="copy-btn">📋</button>
+      </div>
+      <div class="info-item">
+        <span class="label">Your ID:</span>
+        <span id="user-display" class="value"></span>
+      </div>
+      <div class="info-item">
+        <span class="label">Webcam/Mic:</span>
+        <span id="media-status" class="value">Streaming</span>
+      </div>
+    </div>
+
+    <div id="video-section" class="section hidden">
+      <div class="video-grid">
+        <div class="video-container">
+          <h3>Your Camera</h3>
+          <video id="local-video" autoplay muted playsinline></video>
+        </div>
+        <div class="video-container">
+          <h3>Remote Camera</h3>
+          <video id="remote-video" autoplay playsinline></video>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <p>Connected to: <strong>ws://watch.toper.dev/ws</strong></p>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
