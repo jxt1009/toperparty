@@ -412,11 +412,13 @@ async function handleSignalingMessage(message) {
     // Received an offer from a peer
     let pc = peerConnections.get(from);
     
-    // If connection exists and is not in a good state for receiving an offer, close and recreate
+    // If connection exists, check if we need to recreate it
     if (pc) {
       const pcState = pc.signalingState;
-      if (pcState !== 'stable' && pcState !== 'closed') {
-        console.warn('Received offer while in signaling state:', pcState, '- recreating connection');
+      // Close and recreate if in any non-stable, non-closed state
+      // OR if stable (renegotiation scenario - safer to recreate)
+      if (pcState !== 'closed') {
+        console.log('[WebRTC] Received new offer while in state:', pcState, '- recreating connection for', from);
         try {
           pc.close();
         } catch (e) {}
@@ -424,7 +426,7 @@ async function handleSignalingMessage(message) {
         pc = null;
       }
     }
-    
+
     if (!pc) {
       pc = createPeerConnection(from);
       peerConnections.set(from, pc);
@@ -445,9 +447,7 @@ async function handleSignalingMessage(message) {
       try { pc.close(); } catch (e) {}
     }
     return;
-  }
-
-  if (type === 'ANSWER' && message.answer && from && from !== state.userId) {
+  }  if (type === 'ANSWER' && message.answer && from && from !== state.userId) {
     const pc = peerConnections.get(from);
     if (pc) {
       try {
