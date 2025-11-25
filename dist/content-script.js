@@ -207,13 +207,13 @@ class SyncManager {
         return;
       }
 
-      // Startup Grace Period: Ignore all local events for 3 seconds
+      // Startup Grace Period: Ignore all local events for 5 seconds
       // This prevents the initial "seek to 0" or auto-play from broadcasting
       // and allows the restore logic to do its job without interference.
-      this.suppressLocalUntil = Date.now() + 3000;
+      this.suppressLocalUntil = Date.now() + 5000;
 
       this.attachEventListeners(video);
-      console.log('[SyncManager] Setup complete. Local events suppressed for 3s.');
+      console.log('[SyncManager] Setup complete. Local events suppressed for 5s.');
     } catch (err) {
       console.error('[SyncManager] Error setting up playback sync:', err);
     }
@@ -1439,33 +1439,36 @@ function tryRestorePlaybackState() {
   urlSync.clearState();
 
   // Apply a local, non-broadcast correction using NetflixController
-  netflixController.getCurrentTime()
-    .then((ms) => {
-      const currentSeconds = ms != null ? ms / 1000 : 0;
-      const drift = Math.abs(currentSeconds - targetSeconds);
+  // We wait a moment to ensure the player is ready to accept seeks
+  setTimeout(() => {
+    netflixController.getCurrentTime()
+      .then((ms) => {
+        const currentSeconds = ms != null ? ms / 1000 : 0;
+        const drift = Math.abs(currentSeconds - targetSeconds);
 
-      // Only correct if we're meaningfully off
-      if (drift > 2) {
-        console.log('[ContentScript] Restoring playback position after navigation from', currentSeconds, 'to', targetSeconds);
-        return netflixController.seek(targetSeconds * 1000);
-      }
-    })
-    .then(() => {
-      if (shouldPlay === null) return;
-      return netflixController.isPaused().then((paused) => {
-        if (shouldPlay && paused) {
-          console.log('[ContentScript] Resuming playback after navigation');
-          return netflixController.play();
+        // Only correct if we're meaningfully off
+        if (drift > 2) {
+          console.log('[ContentScript] Restoring playback position after navigation from', currentSeconds, 'to', targetSeconds);
+          return netflixController.seek(targetSeconds * 1000);
         }
-        if (!shouldPlay && !paused) {
-          console.log('[ContentScript] Pausing playback after navigation');
-          return netflixController.pause();
-        }
+      })
+      .then(() => {
+        if (shouldPlay === null) return;
+        return netflixController.isPaused().then((paused) => {
+          if (shouldPlay && paused) {
+            console.log('[ContentScript] Resuming playback after navigation');
+            return netflixController.play();
+          }
+          if (!shouldPlay && !paused) {
+            console.log('[ContentScript] Pausing playback after navigation');
+            return netflixController.pause();
+          }
+        });
+      })
+      .catch((e) => {
+        console.warn('[ContentScript] Failed to restore playback state after navigation:', e);
       });
-    })
-    .catch((e) => {
-      console.warn('[ContentScript] Failed to restore playback state after navigation:', e);
-    });
+  }, 1000); // 1s delay before applying restore
 }
 
 function addOrReplaceTrack(pc, track, stream) {

@@ -29,13 +29,13 @@ export class SyncManager {
         return;
       }
 
-      // Startup Grace Period: Ignore all local events for 3 seconds
+      // Startup Grace Period: Ignore all local events for 5 seconds
       // This prevents the initial "seek to 0" or auto-play from broadcasting
       // and allows the restore logic to do its job without interference.
-      this.suppressLocalUntil = Date.now() + 3000;
+      this.suppressLocalUntil = Date.now() + 5000;
 
       this.attachEventListeners(video);
-      console.log('[SyncManager] Setup complete. Local events suppressed for 3s.');
+      console.log('[SyncManager] Setup complete. Local events suppressed for 5s.');
     } catch (err) {
       console.error('[SyncManager] Error setting up playback sync:', err);
     }

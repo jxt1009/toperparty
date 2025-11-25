@@ -395,33 +395,36 @@ function tryRestorePlaybackState() {
   urlSync.clearState();
 
   // Apply a local, non-broadcast correction using NetflixController
-  netflixController.getCurrentTime()
-    .then((ms) => {
-      const currentSeconds = ms != null ? ms / 1000 : 0;
-      const drift = Math.abs(currentSeconds - targetSeconds);
+  // We wait a moment to ensure the player is ready to accept seeks
+  setTimeout(() => {
+    netflixController.getCurrentTime()
+      .then((ms) => {
+        const currentSeconds = ms != null ? ms / 1000 : 0;
+        const drift = Math.abs(currentSeconds - targetSeconds);
 
-      // Only correct if we're meaningfully off
-      if (drift > 2) {
-        console.log('[ContentScript] Restoring playback position after navigation from', currentSeconds, 'to', targetSeconds);
-        return netflixController.seek(targetSeconds * 1000);
-      }
-    })
-    .then(() => {
-      if (shouldPlay === null) return;
-      return netflixController.isPaused().then((paused) => {
-        if (shouldPlay && paused) {
-          console.log('[ContentScript] Resuming playback after navigation');
-          return netflixController.play();
+        // Only correct if we're meaningfully off
+        if (drift > 2) {
+          console.log('[ContentScript] Restoring playback position after navigation from', currentSeconds, 'to', targetSeconds);
+          return netflixController.seek(targetSeconds * 1000);
         }
-        if (!shouldPlay && !paused) {
-          console.log('[ContentScript] Pausing playback after navigation');
-          return netflixController.pause();
-        }
+      })
+      .then(() => {
+        if (shouldPlay === null) return;
+        return netflixController.isPaused().then((paused) => {
+          if (shouldPlay && paused) {
+            console.log('[ContentScript] Resuming playback after navigation');
+            return netflixController.play();
+          }
+          if (!shouldPlay && !paused) {
+            console.log('[ContentScript] Pausing playback after navigation');
+            return netflixController.pause();
+          }
+        });
+      })
+      .catch((e) => {
+        console.warn('[ContentScript] Failed to restore playback state after navigation:', e);
       });
-    })
-    .catch((e) => {
-      console.warn('[ContentScript] Failed to restore playback state after navigation:', e);
-    });
+  }, 1000); // 1s delay before applying restore
 }
 
 function addOrReplaceTrack(pc, track, stream) {
