@@ -303,6 +303,13 @@ class SyncManager {
         return;
       }
 
+      // Ignore seeks that happen very shortly after initialization (e.g. auto-restore)
+      // This prevents the "seek to 0" on load from broadcasting if it happens late
+      if (now - this.lastProgrammaticSeekAt < 2000 && currentTime < 5) {
+         console.log('[SyncManager] early seek suppressed (likely auto-play/restore artifact)');
+         return;
+      }
+
       if (this.expectedEvents.has('seeked')) {
         this.expectedEvents.delete('seeked');
         console.log('[SyncManager] seeked suppressed (expected programmatic)');
@@ -1277,6 +1284,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     // Setup playback sync, then attempt to restore prior playback state (if any)
     Promise.resolve(syncManager.setup())
       .then(() => {
+        // Mark a programmatic seek time so SyncManager ignores the initial jump
+        syncManager.lastProgrammaticSeekAt = Date.now();
         tryRestorePlaybackState();
       })
       .catch((err) => {
