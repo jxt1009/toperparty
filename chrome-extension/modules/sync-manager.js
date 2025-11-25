@@ -192,25 +192,37 @@ export class SyncManager {
       
       // Check if we just did a local action - don't override it
       const timeSinceLocalAction = this.state.getTimeSinceLocalAction();
-      if (timeSinceLocalAction < 1000) {
-        console.log('Ignoring passive sync - recent local action:', this.state.lastLocalAction.type, timeSinceLocalAction, 'ms ago');
+      const lastActionType = this.state.lastLocalAction.type;
+      
+      // Completely ignore passive sync if we just did ANY local action within 2 seconds
+      if (timeSinceLocalAction < 2000) {
+        console.log('Ignoring passive sync - recent local action:', lastActionType, timeSinceLocalAction, 'ms ago');
         return;
       }
       
-      // Only sync if times differ significantly
+      // Only sync time if difference is significant (>2s)
       if (timeDiff > 2000) {
         console.log('Passive sync: diff was', (timeDiff / 1000).toFixed(1), 's - correcting');
         await this.netflix.seek(requestedTime);
         this.state.recordLocalAction('seek');
       }
       
-      // Handle play/pause state sync
+      // Handle play/pause state sync - but with stricter checks
       const isPaused = await this.netflix.isPaused();
-      if (isPlaying && isPaused && timeSinceLocalAction > 1000) {
+      
+      // Only sync play/pause if there's been no local play/pause action recently (3 seconds)
+      if (lastActionType === 'play' || lastActionType === 'pause') {
+        if (timeSinceLocalAction < 3000) {
+          console.log('Ignoring passive play/pause sync - recent local', lastActionType, timeSinceLocalAction, 'ms ago');
+          return;
+        }
+      }
+      
+      if (isPlaying && isPaused) {
         console.log('Passive sync: resuming playback');
         await this.netflix.play();
         this.state.recordLocalAction('play');
-      } else if (!isPlaying && !isPaused && timeSinceLocalAction > 1000) {
+      } else if (!isPlaying && !isPaused) {
         console.log('Passive sync: pausing playback');
         await this.netflix.pause();
         this.state.recordLocalAction('pause');

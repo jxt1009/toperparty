@@ -1,2 +1,1423 @@
-(()=>{"use strict";const e=new class{constructor(){this.partyActive=!1,this.userId=null,this.roomId=null,this.restoringPartyState=!1,this.lastLocalAction={type:null,time:0},this.lastRemoteAction={type:null,time:0}}startParty(e,t){this.partyActive=!0,this.userId=e,this.roomId=t,console.log("Party started! Room:",t,"User:",e)}stopParty(){this.partyActive=!1,this.userId=null,this.roomId=null,this.lastLocalAction={type:null,time:0},this.lastRemoteAction={type:null,time:0},console.log("Party stopped")}isActive(){return this.partyActive}getUserId(){return this.userId}getRoomId(){return this.roomId}getState(){return{partyActive:this.partyActive,userId:this.userId,roomId:this.roomId,restoringPartyState:this.restoringPartyState}}setRestoringFlag(e){this.restoringPartyState=e}isEcho(e){const t=Date.now()-this.lastLocalAction.time;return this.lastLocalAction.type===e&&t<500&&(console.log(`Ignoring echo of ${e} (${t}ms ago)`),!0)}recordLocalAction(e){this.lastLocalAction={type:e,time:Date.now()},console.log(`Recorded local action: ${e}`)}recordRemoteAction(e){this.lastRemoteAction={type:e,time:Date.now()},console.log(`Recorded remote action: ${e}`)}getTimeSinceLocalAction(){return Date.now()-this.lastLocalAction.time}getTimeSinceRemoteAction(){return Date.now()-this.lastRemoteAction.time}isExtensionContextValid(){try{return chrome.runtime&&chrome.runtime.id}catch(e){return!1}}safeSendMessage(e,t){if(this.isExtensionContextValid())try{chrome.runtime.sendMessage(e,t)}catch(e){console.warn("Failed to send message, extension may have been reloaded:",e.message)}else console.warn("Extension context invalidated - please reload the page")}},t=new class{constructor(){this.injectAPIBridge()}injectAPIBridge(){const e=document.createElement("script");e.src=chrome.runtime.getURL("netflix-api-bridge.js"),(document.head||document.documentElement).appendChild(e),e.onload=function(){console.log("Netflix API bridge loaded"),e.remove()}}_sendCommand(e,t=[]){return new Promise(function(o){const n=function(t){t.detail.command===e&&(document.removeEventListener("__toperparty_response",n),o(t.detail.result))};document.addEventListener("__toperparty_response",n),setTimeout(function(){o(null)},1e3),document.dispatchEvent(new CustomEvent("__toperparty_command",{detail:{command:e,args:t}}))})}play(){return this._sendCommand("play")}pause(){return this._sendCommand("pause")}seek(e){return this._sendCommand("seek",[e])}getCurrentTime(){return this._sendCommand("getCurrentTime")}isPaused(){return this._sendCommand("isPaused")}getVideoElement(){return document.querySelector("video")}},o=new class{constructor(e,t){this.state=e,this.netflix=t,this.listeners=null,this.syncInterval=null}async setup(){try{const e=await this.waitForVideo();if(!e)return void console.warn("Netflix video element not found after wait");this.attachEventListeners(e),this.startPeriodicSync(e),this.sendInitialSync(e),console.log("Playback sync setup complete")}catch(e){console.error("Error setting up playback sync:",e)}}waitForVideo(){return new Promise((e,t)=>{const o=setTimeout(()=>t(new Error("Video element timeout")),1e4),n=()=>{const t=this.netflix.getVideoElement();t?(clearTimeout(o),e(t)):setTimeout(n,100)};n()})}attachEventListeners(e){const t=()=>{this.state.isActive()&&(this.state.isEcho("play")||(console.log("Local play - broadcasting to peers"),this.state.recordLocalAction("play"),this.state.safeSendMessage({type:"PLAY_PAUSE",control:"play",timestamp:e.currentTime})))},o=()=>{this.state.isActive()&&(this.state.isEcho("pause")||(console.log("Local pause - broadcasting to peers"),this.state.recordLocalAction("pause"),this.state.safeSendMessage({type:"PLAY_PAUSE",control:"pause",timestamp:e.currentTime})))},n=()=>{this.state.isActive()&&(this.state.isEcho("seek")||(console.log("Local seek to",e.currentTime,"- broadcasting to peers"),this.state.recordLocalAction("seek"),this.state.safeSendMessage({type:"SEEK",currentTime:e.currentTime,isPlaying:!e.paused})))};let s=0;const r=()=>{if(!this.state.isActive())return;const t=Date.now();t-s<1e3||(s=t,this.state.safeSendMessage({type:"SYNC_TIME",currentTime:e.currentTime,isPlaying:!e.paused}))};e.addEventListener("play",t),e.addEventListener("pause",o),e.addEventListener("seeked",n),e.addEventListener("timeupdate",r),this.listeners={onPlay:t,onPause:o,onSeeked:n,onTimeUpdate:r,video:e}}startPeriodicSync(e){this.syncInterval=setInterval(()=>{this.state.isActive()&&e&&this.state.safeSendMessage({type:"SYNC_TIME",currentTime:e.currentTime,isPlaying:!e.paused})},5e3)}sendInitialSync(e){setTimeout(()=>{this.state.isActive()&&e&&(console.log("Sending initial sync after video setup"),this.state.safeSendMessage({type:"SYNC_TIME",currentTime:e.currentTime,isPlaying:!e.paused}))},2e3)}teardown(){if(this.syncInterval&&(clearInterval(this.syncInterval),this.syncInterval=null),this.listeners&&this.listeners.video){const{video:e,onPlay:t,onPause:o,onSeeked:n,onTimeUpdate:s}=this.listeners;try{e.removeEventListener("play",t),e.removeEventListener("pause",o),e.removeEventListener("seeked",n),e.removeEventListener("timeupdate",s)}catch(e){console.warn("Error removing video event listeners:",e)}this.listeners=null}}async handlePlaybackControl(e,t){console.log("Applying remote",e,"command from",t),this.state.recordRemoteAction(e);try{"play"===e?(await this.netflix.play(),console.log("Remote play completed"),this.state.recordLocalAction("play")):"pause"===e&&(await this.netflix.pause(),console.log("Remote pause completed"),this.state.recordLocalAction("pause"))}catch(t){console.error("Failed to apply remote",e,":",t)}}async handleSeek(e,t,o){console.log("Applying remote SEEK to",e,"s from",o),this.state.recordRemoteAction("seek");const n=1e3*e;try{await this.netflix.seek(n),console.log("Remote seek completed"),this.state.recordLocalAction("seek");const e=await this.netflix.isPaused();t&&e?(await this.netflix.play(),this.state.recordLocalAction("play")):t||e||(await this.netflix.pause(),this.state.recordLocalAction("pause"))}catch(e){console.error("Failed to apply remote seek:",e)}}async handlePassiveSync(e,t,o){try{const o=await this.netflix.getCurrentTime(),n=1e3*e,s=Math.abs(o-n),r=this.state.getTimeSinceLocalAction();if(r<1e3)return void console.log("Ignoring passive sync - recent local action:",this.state.lastLocalAction.type,r,"ms ago");s>2e3&&(console.log("Passive sync: diff was",(s/1e3).toFixed(1),"s - correcting"),await this.netflix.seek(n),this.state.recordLocalAction("seek"));const a=await this.netflix.isPaused();t&&a&&r>1e3?(console.log("Passive sync: resuming playback"),await this.netflix.play(),this.state.recordLocalAction("play")):!t&&!a&&r>1e3&&(console.log("Passive sync: pausing playback"),await this.netflix.pause(),this.state.recordLocalAction("pause"))}catch(e){console.error("Error handling passive sync:",e)}}}(e,t),n=new class{constructor(e){this.state=e,this.peerConnections=new Map,this.reconnectionAttempts=new Map,this.reconnectionTimeouts=new Map,this.localStream=null}setLocalStream(e){this.localStream=e}getLocalStream(){return this.localStream}getPeerConnections(){return this.peerConnections}getReconnectionAttempts(){return this.reconnectionAttempts}getReconnectionTimeouts(){return this.reconnectionTimeouts}clearAll(){this.peerConnections.forEach(e=>{try{e.close()}catch(e){}}),this.peerConnections.clear(),this.reconnectionTimeouts.forEach(e=>{clearTimeout(e)}),this.reconnectionTimeouts.clear(),this.reconnectionAttempts.clear(),this.localStream&&(this.localStream.getTracks().forEach(e=>e.stop()),this.localStream=null)}},s=new class{constructor(){this.localPreviewVideo=null,this.remoteVideos=new Map,this.remoteStreams=new Map,this.streamMonitorInterval=null}getRemoteVideos(){return this.remoteVideos}getRemoteStreams(){return this.remoteStreams}setLocalPreviewVideo(e){this.localPreviewVideo=e}getLocalPreviewVideo(){return this.localPreviewVideo}setStreamMonitorInterval(e){this.streamMonitorInterval=e}getStreamMonitorInterval(){return this.streamMonitorInterval}clearStreamMonitorInterval(){this.streamMonitorInterval&&(clearInterval(this.streamMonitorInterval),this.streamMonitorInterval=null)}clearAll(){this.localPreviewVideo=null,this.remoteVideos.clear(),this.remoteStreams.clear(),this.clearStreamMonitorInterval()}},r=new class{constructor(e){this.stateManager=e,this.urlMonitorInterval=null,this.lastUrl=null}start(){this.lastUrl=window.location.href}stop(){this.urlMonitorInterval&&(clearInterval(this.urlMonitorInterval),this.urlMonitorInterval=null)}saveState(){const e=this.stateManager.getState();e.partyActive&&sessionStorage.setItem("toperparty_restore",JSON.stringify({userId:e.userId,roomId:e.roomId,timestamp:Date.now()}))}clearState(){sessionStorage.removeItem("toperparty_restore")}getRestorationState(){const e=sessionStorage.getItem("toperparty_restore");if(!e)return null;try{const t=JSON.parse(e);if(Date.now()-t.timestamp<3e4)return t}catch(e){console.error("[toperparty] Failed to parse restoration state:",e)}return null}}(e);let a=null;const i=n.peerConnections,c=s.getRemoteVideos(),l=s.getRemoteStreams(),d=n.reconnectionAttempts,m=n.reconnectionTimeouts;!function(){const t=r.getRestorationState();t&&(console.log("Detected party state after navigation, will restore:",t),r.clearState(),e.setRestoringFlag(!0),setTimeout(function(){chrome.runtime.sendMessage({type:"RESTORE_PARTY",roomId:t.roomId,userId:t.userId}),setTimeout(function(){e.setRestoringFlag(!1),console.log("Party restoration complete, URL monitoring active")},2e3)},1e3))}(),t.injectAPIBridge();let u=window.location.href;function h(e,t,o){const n=e.getSenders().find(e=>e.track&&e.track.kind===t.kind);if(n)n.replaceTrack(t).catch(e=>console.warn("Error replacing track",e));else try{e.addTrack(t,o)}catch(e){console.warn("Error adding track",e)}}function p(t){e.safeSendMessage({type:"SIGNAL_SEND",message:t},function(e){})}async function g(t){const o=e.getState();if(!o.partyActive||!o.userId||!o.roomId)return void console.log("Cannot reconnect - party not active");const n=d.get(t)||0,s=Math.min(1e3*Math.pow(2,n),3e4);if(n>=5)return console.log("Max reconnection attempts reached for",t),d.delete(t),void m.delete(t);console.log(`Attempting reconnection to ${t} (attempt ${n+1}/5) in ${s}ms`),d.set(t,n+1);const r=m.get(t);r&&clearTimeout(r);const c=setTimeout(async function(){console.log("Reconnecting to",t);const e=i.get(t);if(e){try{e.close()}catch(e){console.warn("Error closing old peer connection:",e)}i.delete(t)}try{const e=f(t);i.set(t,e),a&&a.getTracks().forEach(t=>h(e,t,a));const n=await e.createOffer();await e.setLocalDescription(n),p({type:"OFFER",from:o.userId,to:t,offer:e.localDescription}),console.log("Reconnection offer sent to",t)}catch(e){console.error("Failed to create reconnection offer:",e),g(t)}},s);m.set(t,c)}function y(e){d.delete(e);const t=m.get(e);t&&(clearTimeout(t),m.delete(e))}function f(t){const o=e.getState(),n=new RTCPeerConnection({iceServers:[{urls:["stun:stun.l.google.com:19302"]},{urls:["stun:stun1.l.google.com:19302"]}]});return n.onicecandidate=e=>{e.candidate&&p({type:"ICE_CANDIDATE",from:o.userId,to:t,candidate:e.candidate})},n.ontrack=e=>{console.log("Received remote track from",t,"track=",e.track&&e.track.kind);let o=e.streams&&e.streams[0]||l.get(t);if(o||(o=new MediaStream,l.set(t,o)),e.track)try{o.addTrack(e.track),e.track.onended=function(){console.warn("Remote track ended from",t,"kind=",e.track.kind)},console.log("Added remote track to stream, kind=",e.track.kind,"readyState=",e.track.readyState)}catch(e){console.warn("Failed to add remote track to stream",e)}c.has(t)||function(e,t){v(e);const o=document.createElement("video");o.id="toperparty-remote-"+e,o.autoplay=!0,o.playsInline=!0,o.muted=!0,o.style.position="fixed",o.style.bottom="20px",o.style.right=20+180*c.size+"px",o.style.width="240px",o.style.height="160px",o.style.zIndex=10001,o.style.border="2px solid #00aaff",o.style.borderRadius="4px";const n=t.getAudioTracks();console.log("Remote stream audio tracks:",n.length),n.forEach(function(e){console.log("Audio track:",e.id,"enabled=",e.enabled,"readyState=",e.readyState)});try{o.srcObject=t}catch(e){o.src=URL.createObjectURL(t)}document.body.appendChild(o),c.set(e,o);try{o.play().then(function(){console.log("Remote video playing, unmuting audio for",e),o.muted=!1,o.volume=1}).catch(function(e){console.warn("Remote video play() failed:",e),o.muted=!1})}catch(e){console.error("Exception calling play():",e)}}(t,o)},n.onconnectionstatechange=()=>{console.log("PC state",n.connectionState,"for",t),"connected"===n.connectionState?(console.log("Connection established successfully with",t),y(t)):"disconnected"===n.connectionState||"failed"===n.connectionState?(console.warn("Connection",n.connectionState,"with",t,"- attempting reconnection"),i.delete(t),v(t),g(t)):"closed"===n.connectionState&&(console.log("Connection closed with",t),i.delete(t),v(t),y(t))},n}function v(e){const t=c.get(e);if(t){try{t.srcObject&&(t.srcObject=null)}catch(e){}t.remove(),c.delete(e)}l.delete(e)}chrome.runtime.onMessage.addListener((t,l,g)=>{if("SIGNAL"===t.type&&t.message)(async function(t){if(!t||!t.type)return;const o=t.type,n=t.userId||t.from,s=t.to,r=e.getState();if(!s||s===r.userId)if("JOIN"===o&&n&&n!==r.userId){if(!i.has(n))try{const e=f(n);i.set(n,e),a&&a.getTracks().forEach(t=>h(e,t,a));const t=await e.createOffer();await e.setLocalDescription(t),p({type:"OFFER",from:r.userId,to:n,offer:e.localDescription})}catch(e){console.error("Error handling JOIN and creating offer:",e),i.delete(n)}}else{if("OFFER"===o&&t.offer&&n&&n!==r.userId){let e=i.get(n);if(e){const t=e.signalingState;if("stable"!==t&&"closed"!==t){console.warn("Received offer while in signaling state:",t,"- recreating connection");try{e.close()}catch(e){}i.delete(n),e=null}}e||(e=f(n),i.set(n,e));try{await e.setRemoteDescription(new RTCSessionDescription(t.offer)),a&&a.getTracks().forEach(t=>h(e,t,a));const o=await e.createAnswer();await e.setLocalDescription(o),p({type:"ANSWER",from:r.userId,to:n,answer:e.localDescription})}catch(t){console.error("Error handling offer:",t),i.delete(n);try{e.close()}catch(e){}}return}if("ANSWER"===o&&t.answer&&n&&n!==r.userId){const e=i.get(n);if(e)try{"have-local-offer"===e.signalingState?await e.setRemoteDescription(new RTCSessionDescription(t.answer)):console.warn("Received answer in unexpected state:",e.signalingState)}catch(e){console.error("Error handling answer:",e)}return}if("ICE_CANDIDATE"===o&&t.candidate&&n&&n!==r.userId){const e=i.get(n);if(e)try{await e.addIceCandidate(new RTCIceCandidate(t.candidate))}catch(e){console.warn("Error adding received ICE candidate",e)}return}if("LEAVE"===o&&n){const e=i.get(n);return e&&(e.close(),i.delete(n)),void v(n)}}})(t.message).catch(e=>console.error("Signal handling error:",e));else{if("REQUEST_MEDIA_STREAM"===t.type)return navigator.mediaDevices.getUserMedia({video:{width:{ideal:640},height:{ideal:480}},audio:!0}).then(e=>{a=e,n.setLocalStream(e),console.log("Media stream obtained in content script"),e.getTracks().forEach(function(e){console.log("Local stream track obtained:",e.kind,"id=",e.id,"readyState=",e.readyState),e.onended=function(){console.error("LOCAL STREAM TRACK ENDED UNEXPECTEDLY:",e.kind,"id=",e.id)},e.onmute=function(){console.warn("Local stream track muted:",e.kind)},e.onunmute=function(){console.log("Local stream track unmuted:",e.kind)}}),function(e){let t=s.getLocalPreviewVideo();if(t){try{t.srcObject&&(t.srcObject=null)}catch(e){}t.remove(),t=null}const o=document.createElement("video");o.id="toperparty-local-preview",o.autoplay=!0,o.muted=!0,o.playsInline=!0,o.style.position="fixed",o.style.bottom="20px",o.style.left="20px",o.style.width="240px",o.style.height="160px",o.style.zIndex=10001,o.style.border="2px solid #e50914",o.style.borderRadius="4px",o.style.transform="scaleX(-1)";try{o.srcObject=e}catch(t){o.src=URL.createObjectURL(e)}document.body.appendChild(o),s.setLocalPreviewVideo(o),o.play().catch(function(e){console.warn("Local preview play() failed (this is usually fine):",e)})}(e),function(e){s.clearStreamMonitorInterval();const t=setInterval(function(){if(!e)return console.warn("Local stream is null, stopping monitor"),void s.clearStreamMonitorInterval();const t=e.getTracks();if(0===t.length)return console.warn("Local stream has no tracks"),void s.clearStreamMonitorInterval();let o=!0;t.forEach(function(e){"live"!==e.readyState&&(console.error("Local stream track not live:",e.kind,"readyState=",e.readyState),o=!1)}),o||console.warn("Some local stream tracks are not active - may need to restart stream")},5e3);s.setStreamMonitorInterval(t)}(e),i.forEach(t=>{try{e.getTracks().forEach(o=>h(t,o,e))}catch(e){console.warn("Error adding tracks to pc",e)}}),g({success:!0,message:"Media stream obtained"})}).catch(e=>{console.error("Failed to get media stream:",e),g({success:!1,error:e.message})}),!0;if("PARTY_STARTED"===t.type&&(e.startParty(t.userId,t.roomId),console.log("Party started! Room:",t.roomId,"User:",t.userId),function(){const t=e.getState();window.addEventListener("beforeunload",function(){t.partyActive&&t.userId&&t.roomId&&r.saveState()}),setInterval(function(){const t=window.location.href,o=e.getState();t!==u&&o.partyActive&&!o.restoringPartyState?(console.log("URL changed from",u,"to",t),u=t,e.safeSendMessage({type:"URL_CHANGE",url:t})):o.restoringPartyState||(u=t)},500)}(),o.setup(),g({success:!0})),"PARTY_STOPPED"===t.type){e.stopParty(),u=window.location.href,r.stop(),o.teardown(),s.clearStreamMonitorInterval(),a&&(a.getTracks().forEach(e=>e.stop()),a=null,n.setLocalStream(null)),function(){const e=s.getLocalPreviewVideo();if(e){try{e.srcObject&&(e.srcObject.getTracks().forEach(function(e){e.stop()}),e.srcObject=null)}catch(e){console.warn("Error stopping local preview tracks:",e)}e.remove(),s.setLocalPreviewVideo(null)}}(),function(){const e=document.getElementById("netflix-party-controls");e&&e.remove()}(),m.forEach(e=>{clearTimeout(e)}),m.clear(),d.clear();try{i.forEach(e=>{try{e.close()}catch(e){}}),i.clear()}catch(e){}try{c.forEach((e,t)=>v(t))}catch(e){}console.log("Party stopped"),g({success:!0})}if("APPLY_PLAYBACK_CONTROL"===t.type&&(o.handlePlaybackControl(t),g({success:!0})),"APPLY_SYNC_PLAYBACK"===t.type&&(o.handlePassiveSync(t),g({success:!0})),"APPLY_SEEK"===t.type&&(o.handleSeek(t),g({success:!0})),"APPLY_URL_CHANGE"===t.type){console.log("Applying URL change from remote user:",t.url,"from user:",t.fromUserId);const o=e.getState();o.partyActive&&o.userId&&o.roomId&&(r.saveState(),console.log("Saved party state before navigation")),window.location.href=t.url,g({success:!0})}}})})();
+/******/ (() => { // webpackBootstrap
+/******/ 	"use strict";
+/******/ 	var __webpack_modules__ = ({
+
+/***/ "./chrome-extension/modules/netflix-controller.js":
+/*!********************************************************!*\
+  !*** ./chrome-extension/modules/netflix-controller.js ***!
+  \********************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   NetflixController: () => (/* binding */ NetflixController)
+/* harmony export */ });
+// netflix-controller.js - Netflix player API wrapper
+
+class NetflixController {
+  constructor() {
+    this.injectAPIBridge();
+  }
+  
+  // Inject Netflix API access script into page context
+  injectAPIBridge() {
+    const script = document.createElement('script');
+    script.src = chrome.runtime.getURL('netflix-api-bridge.js');
+    (document.head || document.documentElement).appendChild(script);
+    script.onload = function() {
+      console.log('Netflix API bridge loaded');
+      script.remove();
+    };
+  }
+  
+  // Send command to Netflix API via custom events
+  _sendCommand(command, args = []) {
+    return new Promise(function(resolve) {
+      const handler = function(e) {
+        if (e.detail.command === command) {
+          document.removeEventListener('__toperparty_response', handler);
+          resolve(e.detail.result);
+        }
+      };
+      document.addEventListener('__toperparty_response', handler);
+      setTimeout(function() { resolve(null); }, 1000); // timeout fallback
+      document.dispatchEvent(new CustomEvent('__toperparty_command', { detail: { command, args } }));
+    });
+  }
+  
+  play() {
+    return this._sendCommand('play');
+  }
+  
+  pause() {
+    return this._sendCommand('pause');
+  }
+  
+  seek(timeMs) {
+    return this._sendCommand('seek', [timeMs]);
+  }
+  
+  getCurrentTime() {
+    return this._sendCommand('getCurrentTime');
+  }
+  
+  isPaused() {
+    return this._sendCommand('isPaused');
+  }
+  
+  // Find Netflix video element (fallback)
+  getVideoElement() {
+    return document.querySelector('video');
+  }
+}
+
+
+/***/ }),
+
+/***/ "./chrome-extension/modules/state-manager.js":
+/*!***************************************************!*\
+  !*** ./chrome-extension/modules/state-manager.js ***!
+  \***************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   StateManager: () => (/* binding */ StateManager)
+/* harmony export */ });
+// state-manager.js - Manages party state and action tracking
+
+class StateManager {
+  constructor() {
+    // Party state
+    this.partyActive = false;
+    this.userId = null;
+    this.roomId = null;
+    this.restoringPartyState = false;
+    
+    // Action tracking for echo prevention
+    this.lastLocalAction = { type: null, time: 0 };
+    this.lastRemoteAction = { type: null, time: 0 };
+  }
+  
+  // Party state management
+  startParty(userId, roomId) {
+    this.partyActive = true;
+    this.userId = userId;
+    this.roomId = roomId;
+    console.log('Party started! Room:', roomId, 'User:', userId);
+  }
+  
+  stopParty() {
+    this.partyActive = false;
+    this.userId = null;
+    this.roomId = null;
+    this.lastLocalAction = { type: null, time: 0 };
+    this.lastRemoteAction = { type: null, time: 0 };
+    console.log('Party stopped');
+  }
+  
+  isActive() {
+    return this.partyActive;
+  }
+  
+  getUserId() {
+    return this.userId;
+  }
+  
+  getRoomId() {
+    return this.roomId;
+  }
+  
+  getState() {
+    return {
+      partyActive: this.partyActive,
+      userId: this.userId,
+      roomId: this.roomId,
+      restoringPartyState: this.restoringPartyState
+    };
+  }
+  
+  setRestoringFlag(value) {
+    this.restoringPartyState = value;
+  }
+  
+  // Echo prevention helpers
+  isEcho(actionType) {
+    const now = Date.now();
+    const timeSinceLocal = now - this.lastLocalAction.time;
+    
+    // If we just performed this action within 500ms, it's likely an echo
+    if (this.lastLocalAction.type === actionType && timeSinceLocal < 500) {
+      console.log(`Ignoring echo of ${actionType} (${timeSinceLocal}ms ago)`);
+      return true;
+    }
+    return false;
+  }
+  
+  recordLocalAction(actionType) {
+    this.lastLocalAction = { type: actionType, time: Date.now() };
+    console.log(`Recorded local action: ${actionType}`);
+  }
+  
+  recordRemoteAction(actionType) {
+    this.lastRemoteAction = { type: actionType, time: Date.now() };
+    console.log(`Recorded remote action: ${actionType}`);
+  }
+  
+  getTimeSinceLocalAction() {
+    return Date.now() - this.lastLocalAction.time;
+  }
+  
+  getTimeSinceRemoteAction() {
+    return Date.now() - this.lastRemoteAction.time;
+  }
+  
+  // Extension context validation
+  isExtensionContextValid() {
+    try {
+      return chrome.runtime && chrome.runtime.id;
+    } catch (e) {
+      return false;
+    }
+  }
+  
+  // Safe message sending
+  safeSendMessage(message, callback) {
+    if (!this.isExtensionContextValid()) {
+      console.warn('Extension context invalidated - please reload the page');
+      return;
+    }
+    try {
+      chrome.runtime.sendMessage(message, callback);
+    } catch (e) {
+      console.warn('Failed to send message, extension may have been reloaded:', e.message);
+    }
+  }
+}
+
+
+/***/ }),
+
+/***/ "./chrome-extension/modules/sync-manager.js":
+/*!**************************************************!*\
+  !*** ./chrome-extension/modules/sync-manager.js ***!
+  \**************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   SyncManager: () => (/* binding */ SyncManager)
+/* harmony export */ });
+// sync-manager.js - Handles playback synchronization
+
+class SyncManager {
+  constructor(stateManager, netflixController) {
+    this.state = stateManager;
+    this.netflix = netflixController;
+    this.listeners = null;
+    this.syncInterval = null;
+  }
+  
+  // Setup playback synchronization
+  async setup() {
+    try {
+      const video = await this.waitForVideo();
+      if (!video) {
+        console.warn('Netflix video element not found after wait');
+        return;
+      }
+      
+      this.attachEventListeners(video);
+      this.startPeriodicSync(video);
+      this.sendInitialSync(video);
+      
+      console.log('Playback sync setup complete');
+    } catch (err) {
+      console.error('Error setting up playback sync:', err);
+    }
+  }
+  
+  // Wait for Netflix video element to appear
+  waitForVideo() {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Video element timeout')), 10000);
+      
+      const check = () => {
+        const video = this.netflix.getVideoElement();
+        if (video) {
+          clearTimeout(timeout);
+          resolve(video);
+        } else {
+          setTimeout(check, 100);
+        }
+      };
+      check();
+    });
+  }
+  
+  // Attach event listeners to video element
+  attachEventListeners(video) {
+    // Play event - always broadcast unless it's an echo
+    const onPlay = () => {
+      if (!this.state.isActive()) return;
+      if (this.state.isEcho('play')) return;
+      
+      console.log('Local play - broadcasting to peers');
+      this.state.recordLocalAction('play');
+      this.state.safeSendMessage({ type: 'PLAY_PAUSE', control: 'play', timestamp: video.currentTime });
+    };
+    
+    // Pause event - always broadcast unless it's an echo
+    const onPause = () => {
+      if (!this.state.isActive()) return;
+      if (this.state.isEcho('pause')) return;
+      
+      console.log('Local pause - broadcasting to peers');
+      this.state.recordLocalAction('pause');
+      this.state.safeSendMessage({ type: 'PLAY_PAUSE', control: 'pause', timestamp: video.currentTime });
+    };
+    
+    // Seek event - always broadcast unless it's an echo
+    const onSeeked = () => {
+      if (!this.state.isActive()) return;
+      if (this.state.isEcho('seek')) return;
+      
+      console.log('Local seek to', video.currentTime, '- broadcasting to peers');
+      this.state.recordLocalAction('seek');
+      this.state.safeSendMessage({ type: 'SEEK', currentTime: video.currentTime, isPlaying: !video.paused });
+    };
+    
+    // Throttled timeupdate sender (passive drift correction)
+    let lastSentAt = 0;
+    const onTimeUpdate = () => {
+      if (!this.state.isActive()) return;
+      
+      const now = Date.now();
+      if (now - lastSentAt < 1000) return; // throttle to ~1s
+      lastSentAt = now;
+      this.state.safeSendMessage({ type: 'SYNC_TIME', currentTime: video.currentTime, isPlaying: !video.paused });
+    };
+    
+    video.addEventListener('play', onPlay);
+    video.addEventListener('pause', onPause);
+    video.addEventListener('seeked', onSeeked);
+    video.addEventListener('timeupdate', onTimeUpdate);
+    
+    // Save references for teardown
+    this.listeners = { onPlay, onPause, onSeeked, onTimeUpdate, video };
+  }
+  
+  // Periodic fallback sync (every 5 seconds)
+  startPeriodicSync(video) {
+    this.syncInterval = setInterval(() => {
+      if (this.state.isActive() && video) {
+        this.state.safeSendMessage({ type: 'SYNC_TIME', currentTime: video.currentTime, isPlaying: !video.paused });
+      }
+    }, 5000);
+  }
+  
+  // Send initial sync after setup
+  sendInitialSync(video) {
+    setTimeout(() => {
+      if (this.state.isActive() && video) {
+        console.log('Sending initial sync after video setup');
+        this.state.safeSendMessage({ type: 'SYNC_TIME', currentTime: video.currentTime, isPlaying: !video.paused });
+      }
+    }, 2000);
+  }
+  
+  // Teardown playback synchronization
+  teardown() {
+    if (this.syncInterval) {
+      clearInterval(this.syncInterval);
+      this.syncInterval = null;
+    }
+    
+    if (this.listeners && this.listeners.video) {
+      const { video, onPlay, onPause, onSeeked, onTimeUpdate } = this.listeners;
+      try {
+        video.removeEventListener('play', onPlay);
+        video.removeEventListener('pause', onPause);
+        video.removeEventListener('seeked', onSeeked);
+        video.removeEventListener('timeupdate', onTimeUpdate);
+      } catch (e) {
+        console.warn('Error removing video event listeners:', e);
+      }
+      this.listeners = null;
+    }
+  }
+  
+  // Handle remote playback control commands
+  async handlePlaybackControl(control, fromUserId) {
+    console.log('Applying remote', control, 'command from', fromUserId);
+    this.state.recordRemoteAction(control);
+    
+    try {
+      if (control === 'play') {
+        await this.netflix.play();
+        console.log('Remote play completed');
+        this.state.recordLocalAction('play'); // Prevent echo
+      } else if (control === 'pause') {
+        await this.netflix.pause();
+        console.log('Remote pause completed');
+        this.state.recordLocalAction('pause'); // Prevent echo
+      }
+    } catch (err) {
+      console.error('Failed to apply remote', control, ':', err);
+    }
+  }
+  
+  // Handle remote seek commands
+  async handleSeek(currentTime, isPlaying, fromUserId) {
+    console.log('Applying remote SEEK to', currentTime, 's from', fromUserId);
+    this.state.recordRemoteAction('seek');
+    
+    const requestedTime = currentTime * 1000; // Convert to ms
+    
+    try {
+      await this.netflix.seek(requestedTime);
+      console.log('Remote seek completed');
+      this.state.recordLocalAction('seek'); // Prevent echo
+      
+      // Also sync play/pause state
+      const isPaused = await this.netflix.isPaused();
+      if (isPlaying && isPaused) {
+        await this.netflix.play();
+        this.state.recordLocalAction('play');
+      } else if (!isPlaying && !isPaused) {
+        await this.netflix.pause();
+        this.state.recordLocalAction('pause');
+      }
+    } catch (err) {
+      console.error('Failed to apply remote seek:', err);
+    }
+  }
+  
+  // Handle passive sync (drift correction)
+  async handlePassiveSync(currentTime, isPlaying, fromUserId) {
+    try {
+      const localTime = await this.netflix.getCurrentTime();
+      const requestedTime = currentTime * 1000; // Convert to ms
+      const timeDiff = Math.abs(localTime - requestedTime);
+      
+      // Check if we just did a local action - don't override it
+      const timeSinceLocalAction = this.state.getTimeSinceLocalAction();
+      const lastActionType = this.state.lastLocalAction.type;
+      
+      // Completely ignore passive sync if we just did ANY local action within 2 seconds
+      if (timeSinceLocalAction < 2000) {
+        console.log('Ignoring passive sync - recent local action:', lastActionType, timeSinceLocalAction, 'ms ago');
+        return;
+      }
+      
+      // Only sync time if difference is significant (>2s)
+      if (timeDiff > 2000) {
+        console.log('Passive sync: diff was', (timeDiff / 1000).toFixed(1), 's - correcting');
+        await this.netflix.seek(requestedTime);
+        this.state.recordLocalAction('seek');
+      }
+      
+      // Handle play/pause state sync - but with stricter checks
+      const isPaused = await this.netflix.isPaused();
+      
+      // Only sync play/pause if there's been no local play/pause action recently (3 seconds)
+      if (lastActionType === 'play' || lastActionType === 'pause') {
+        if (timeSinceLocalAction < 3000) {
+          console.log('Ignoring passive play/pause sync - recent local', lastActionType, timeSinceLocalAction, 'ms ago');
+          return;
+        }
+      }
+      
+      if (isPlaying && isPaused) {
+        console.log('Passive sync: resuming playback');
+        await this.netflix.play();
+        this.state.recordLocalAction('play');
+      } else if (!isPlaying && !isPaused) {
+        console.log('Passive sync: pausing playback');
+        await this.netflix.pause();
+        this.state.recordLocalAction('pause');
+      }
+    } catch (err) {
+      console.error('Error handling passive sync:', err);
+    }
+  }
+}
+
+
+/***/ }),
+
+/***/ "./chrome-extension/modules/ui-manager.js":
+/*!************************************************!*\
+  !*** ./chrome-extension/modules/ui-manager.js ***!
+  \************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   UIManager: () => (/* binding */ UIManager)
+/* harmony export */ });
+// ui-manager.js - Manages UI components (preview videos)
+// Note: Keeping this simple for now, full extraction in future refactor
+
+class UIManager {
+  constructor() {
+    this.localPreviewVideo = null;
+    this.remoteVideos = new Map();
+    this.remoteStreams = new Map();
+    this.streamMonitorInterval = null;
+  }
+  
+  getRemoteVideos() {
+    return this.remoteVideos;
+  }
+  
+  getRemoteStreams() {
+    return this.remoteStreams;
+  }
+  
+  setLocalPreviewVideo(video) {
+    this.localPreviewVideo = video;
+  }
+  
+  getLocalPreviewVideo() {
+    return this.localPreviewVideo;
+  }
+  
+  setStreamMonitorInterval(interval) {
+    this.streamMonitorInterval = interval;
+  }
+  
+  getStreamMonitorInterval() {
+    return this.streamMonitorInterval;
+  }
+  
+  clearStreamMonitorInterval() {
+    if (this.streamMonitorInterval) {
+      clearInterval(this.streamMonitorInterval);
+      this.streamMonitorInterval = null;
+    }
+  }
+  
+  clearAll() {
+    this.localPreviewVideo = null;
+    this.remoteVideos.clear();
+    this.remoteStreams.clear();
+    this.clearStreamMonitorInterval();
+  }
+}
+
+
+/***/ }),
+
+/***/ "./chrome-extension/modules/url-sync.js":
+/*!**********************************************!*\
+  !*** ./chrome-extension/modules/url-sync.js ***!
+  \**********************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   URLSync: () => (/* binding */ URLSync)
+/* harmony export */ });
+// url-sync.js - Manages URL monitoring and party state persistence
+// Note: Keeping this simple for now, full extraction in future refactor
+
+class URLSync {
+  constructor(stateManager) {
+    this.stateManager = stateManager;
+    this.urlMonitorInterval = null;
+    this.lastUrl = null;
+  }
+  
+  start() {
+    this.lastUrl = window.location.href;
+    // URL monitoring logic will be moved here in full extraction
+  }
+  
+  stop() {
+    if (this.urlMonitorInterval) {
+      clearInterval(this.urlMonitorInterval);
+      this.urlMonitorInterval = null;
+    }
+  }
+  
+  saveState() {
+    // Party state persistence logic will be moved here
+    const state = this.stateManager.getState();
+    if (state.partyActive) {
+      sessionStorage.setItem('toperparty_restore', JSON.stringify({
+        userId: state.userId,
+        roomId: state.roomId,
+        timestamp: Date.now()
+      }));
+    }
+  }
+  
+  clearState() {
+    sessionStorage.removeItem('toperparty_restore');
+  }
+  
+  getRestorationState() {
+    const stored = sessionStorage.getItem('toperparty_restore');
+    if (!stored) return null;
+    
+    try {
+      const state = JSON.parse(stored);
+      // Check if restoration state is recent (within 30 seconds)
+      if (Date.now() - state.timestamp < 30000) {
+        return state;
+      }
+    } catch (e) {
+      console.error('[toperparty] Failed to parse restoration state:', e);
+    }
+    
+    return null;
+  }
+}
+
+
+/***/ }),
+
+/***/ "./chrome-extension/modules/webrtc-manager.js":
+/*!****************************************************!*\
+  !*** ./chrome-extension/modules/webrtc-manager.js ***!
+  \****************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   WebRTCManager: () => (/* binding */ WebRTCManager)
+/* harmony export */ });
+// webrtc-manager.js - Manages WebRTC peer connections
+// Note: This is a large module that handles peer connections, signaling, and reconnection logic
+// For now, keeping the core WebRTC functionality in the main file to avoid breaking changes
+// TODO: Extract this properly in a future refactor
+
+class WebRTCManager {
+  constructor(stateManager) {
+    this.state = stateManager;
+    this.peerConnections = new Map();
+    this.reconnectionAttempts = new Map();
+    this.reconnectionTimeouts = new Map();
+    this.localStream = null;
+  }
+  
+  setLocalStream(stream) {
+    this.localStream = stream;
+  }
+  
+  getLocalStream() {
+    return this.localStream;
+  }
+  
+  getPeerConnections() {
+    return this.peerConnections;
+  }
+  
+  getReconnectionAttempts() {
+    return this.reconnectionAttempts;
+  }
+  
+  getReconnectionTimeouts() {
+    return this.reconnectionTimeouts;
+  }
+  
+  clearAll() {
+    // Close all peer connections
+    this.peerConnections.forEach((pc) => {
+      try { pc.close(); } catch (e) {}
+    });
+    this.peerConnections.clear();
+    
+    // Clear reconnection state
+    this.reconnectionTimeouts.forEach((timeoutHandle) => {
+      clearTimeout(timeoutHandle);
+    });
+    this.reconnectionTimeouts.clear();
+    this.reconnectionAttempts.clear();
+    
+    // Stop local stream
+    if (this.localStream) {
+      this.localStream.getTracks().forEach(track => track.stop());
+      this.localStream = null;
+    }
+  }
+}
+
+
+/***/ })
+
+/******/ 	});
+/************************************************************************/
+/******/ 	// The module cache
+/******/ 	var __webpack_module_cache__ = {};
+/******/ 	
+/******/ 	// The require function
+/******/ 	function __webpack_require__(moduleId) {
+/******/ 		// Check if module is in cache
+/******/ 		var cachedModule = __webpack_module_cache__[moduleId];
+/******/ 		if (cachedModule !== undefined) {
+/******/ 			return cachedModule.exports;
+/******/ 		}
+/******/ 		// Create a new module (and put it into the cache)
+/******/ 		var module = __webpack_module_cache__[moduleId] = {
+/******/ 			// no module.id needed
+/******/ 			// no module.loaded needed
+/******/ 			exports: {}
+/******/ 		};
+/******/ 	
+/******/ 		// Execute the module function
+/******/ 		__webpack_modules__[moduleId](module, module.exports, __webpack_require__);
+/******/ 	
+/******/ 		// Return the exports of the module
+/******/ 		return module.exports;
+/******/ 	}
+/******/ 	
+/************************************************************************/
+/******/ 	/* webpack/runtime/define property getters */
+/******/ 	(() => {
+/******/ 		// define getter functions for harmony exports
+/******/ 		__webpack_require__.d = (exports, definition) => {
+/******/ 			for(var key in definition) {
+/******/ 				if(__webpack_require__.o(definition, key) && !__webpack_require__.o(exports, key)) {
+/******/ 					Object.defineProperty(exports, key, { enumerable: true, get: definition[key] });
+/******/ 				}
+/******/ 			}
+/******/ 		};
+/******/ 	})();
+/******/ 	
+/******/ 	/* webpack/runtime/hasOwnProperty shorthand */
+/******/ 	(() => {
+/******/ 		__webpack_require__.o = (obj, prop) => (Object.prototype.hasOwnProperty.call(obj, prop))
+/******/ 	})();
+/******/ 	
+/******/ 	/* webpack/runtime/make namespace object */
+/******/ 	(() => {
+/******/ 		// define __esModule on exports
+/******/ 		__webpack_require__.r = (exports) => {
+/******/ 			if(typeof Symbol !== 'undefined' && Symbol.toStringTag) {
+/******/ 				Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' });
+/******/ 			}
+/******/ 			Object.defineProperty(exports, '__esModule', { value: true });
+/******/ 		};
+/******/ 	})();
+/******/ 	
+/************************************************************************/
+var __webpack_exports__ = {};
+// This entry needs to be wrapped in an IIFE because it needs to be isolated against other modules in the chunk.
+(() => {
+/*!********************************************!*\
+  !*** ./chrome-extension/content-script.js ***!
+  \********************************************/
+__webpack_require__.r(__webpack_exports__);
+/* harmony import */ var _modules_state_manager_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./modules/state-manager.js */ "./chrome-extension/modules/state-manager.js");
+/* harmony import */ var _modules_netflix_controller_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./modules/netflix-controller.js */ "./chrome-extension/modules/netflix-controller.js");
+/* harmony import */ var _modules_sync_manager_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./modules/sync-manager.js */ "./chrome-extension/modules/sync-manager.js");
+/* harmony import */ var _modules_webrtc_manager_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./modules/webrtc-manager.js */ "./chrome-extension/modules/webrtc-manager.js");
+/* harmony import */ var _modules_ui_manager_js__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! ./modules/ui-manager.js */ "./chrome-extension/modules/ui-manager.js");
+/* harmony import */ var _modules_url_sync_js__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! ./modules/url-sync.js */ "./chrome-extension/modules/url-sync.js");
+// content-script.js - Modular version with ES6 imports
+
+
+
+
+
+
+
+
+// Initialize managers
+const stateManager = new _modules_state_manager_js__WEBPACK_IMPORTED_MODULE_0__.StateManager();
+const netflixController = new _modules_netflix_controller_js__WEBPACK_IMPORTED_MODULE_1__.NetflixController();
+const syncManager = new _modules_sync_manager_js__WEBPACK_IMPORTED_MODULE_2__.SyncManager(stateManager, netflixController);
+const webrtcManager = new _modules_webrtc_manager_js__WEBPACK_IMPORTED_MODULE_3__.WebRTCManager();
+const uiManager = new _modules_ui_manager_js__WEBPACK_IMPORTED_MODULE_4__.UIManager();
+const urlSync = new _modules_url_sync_js__WEBPACK_IMPORTED_MODULE_5__.URLSync(stateManager);
+
+// WebRTC variables (keeping these in main file for now)
+let localStream = null;
+const peerConnections = webrtcManager.peerConnections;
+const remoteVideos = uiManager.getRemoteVideos();
+const remoteStreams = uiManager.getRemoteStreams();
+const reconnectionAttempts = webrtcManager.reconnectionAttempts;
+const reconnectionTimeouts = webrtcManager.reconnectionTimeouts;
+
+// Check if we need to restore party state after navigation
+(function checkRestorePartyState() {
+  const restorationState = urlSync.getRestorationState();
+  if (restorationState) {
+    console.log('Detected party state after navigation, will restore:', restorationState);
+    
+    // Clear the stored state
+    urlSync.clearState();
+    
+    // Set flag to prevent URL broadcast during restoration
+    stateManager.setRestoringFlag(true);
+    
+    // Notify background that we need to rejoin
+    setTimeout(function() {
+      chrome.runtime.sendMessage({
+        type: 'RESTORE_PARTY',
+        roomId: restorationState.roomId,
+        userId: restorationState.userId
+      });
+      
+      // Clear restoration flag after party is restored
+      setTimeout(function() {
+        stateManager.setRestoringFlag(false);
+        console.log('Party restoration complete, URL monitoring active');
+      }, 2000);
+    }, 1000); // Wait 1s for page to stabilize
+  }
+})();
+
+// Inject Netflix API access script into page context
+netflixController.injectAPIBridge();
+
+// Find Netflix video player (fallback for monitoring)
+function getVideoElement() {
+  return document.querySelector('video');
+}
+
+// URL monitoring - check for navigation changes
+let lastKnownUrl = window.location.href;
+
+function startUrlMonitoring() {
+  const state = stateManager.getState();
+  
+  // Save party state whenever URL is about to change (for hard navigations)
+  window.addEventListener('beforeunload', function savePartyStateBeforeUnload() {
+    if (state.partyActive && state.userId && state.roomId) {
+      urlSync.saveState();
+    }
+  });
+  
+  // Also monitor for soft navigations (client-side routing)
+  setInterval(function checkUrlChange() {
+    const currentUrl = window.location.href;
+    const state = stateManager.getState();
+    
+    // Check if URL changed and party is active (but not during restoration)
+    if (currentUrl !== lastKnownUrl && state.partyActive && !state.restoringPartyState) {
+      console.log('URL changed from', lastKnownUrl, 'to', currentUrl);
+      lastKnownUrl = currentUrl;
+      
+      // Broadcast URL change to other clients
+      stateManager.safeSendMessage({
+        type: 'URL_CHANGE',
+        url: currentUrl
+      });
+    } else if (!state.restoringPartyState) {
+      // Silently update lastKnownUrl if we're not in restoration mode
+      lastKnownUrl = currentUrl;
+    }
+  }, 500); // Check every 500ms
+}
+
+function stopUrlMonitoring() {
+  lastKnownUrl = window.location.href;
+  urlSync.stop();
+}
+
+// Listen for messages from background script
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  // Signaling messages forwarded from background
+  if (request.type === 'SIGNAL' && request.message) {
+    handleSignalingMessage(request.message).catch(err => console.error('Signal handling error:', err));
+    return; // no sendResponse needed
+  }
+  
+  if (request.type === 'REQUEST_MEDIA_STREAM') {
+    // Get media stream for webcam/mic
+    navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 640 }, height: { ideal: 480 } },
+      audio: true
+    })
+      .then((stream) => {
+        localStream = stream;
+        webrtcManager.setLocalStream(stream);
+        console.log('Media stream obtained in content script');
+        
+        // Monitor stream tracks for unexpected ending
+        stream.getTracks().forEach(function(track) {
+          console.log('Local stream track obtained:', track.kind, 'id=', track.id, 'readyState=', track.readyState);
+          track.onended = function() {
+            console.error('LOCAL STREAM TRACK ENDED UNEXPECTEDLY:', track.kind, 'id=', track.id);
+          };
+          track.onmute = function() {
+            console.warn('Local stream track muted:', track.kind);
+          };
+          track.onunmute = function() {
+            console.log('Local stream track unmuted:', track.kind);
+          };
+        });
+        
+        // Create or update local preview
+        attachLocalPreview(stream);
+        
+        // Start monitoring local stream health
+        startLocalStreamMonitor(stream);
+        
+        // add or replace tracks to any existing peer connections
+        peerConnections.forEach((pc) => {
+          try { stream.getTracks().forEach(t => addOrReplaceTrack(pc, t, stream)); } catch (e) { console.warn('Error adding tracks to pc', e); }
+        });
+        sendResponse({ success: true, message: 'Media stream obtained' });
+      })
+      .catch((err) => {
+        console.error('Failed to get media stream:', err);
+        sendResponse({ success: false, error: err.message });
+      });
+    
+    return true; // Keep channel open for async response
+  }
+
+  if (request.type === 'PARTY_STARTED') {
+    stateManager.startParty(request.userId, request.roomId);
+    console.log('Party started! Room:', request.roomId, 'User:', request.userId);
+    
+    // Start monitoring URL changes
+    startUrlMonitoring();
+    
+    // Setup playback sync
+    syncManager.setup();
+    sendResponse({ success: true });
+  }
+
+  if (request.type === 'PARTY_STOPPED') {
+    stateManager.stopParty();
+    
+    // Stop URL monitoring
+    stopUrlMonitoring();
+    
+    // Teardown sync
+    syncManager.teardown();
+    
+    // Stop stream monitor
+    stopLocalStreamMonitor();
+    
+    // Stop media stream
+    if (localStream) {
+      localStream.getTracks().forEach(track => track.stop());
+      localStream = null;
+      webrtcManager.setLocalStream(null);
+    }
+    
+    // Remove local preview UI
+    removeLocalPreview();
+    
+    // Remove injected controls
+    removeInjectedControls();
+    
+    // Clear all reconnection attempts and timeouts
+    reconnectionTimeouts.forEach((timeoutHandle) => {
+      clearTimeout(timeoutHandle);
+    });
+    reconnectionTimeouts.clear();
+    reconnectionAttempts.clear();
+    
+    // Close and clear peer connections
+    try {
+      peerConnections.forEach((pc) => {
+        try { pc.close(); } catch (e) {}
+      });
+      peerConnections.clear();
+    } catch (e) {}
+    
+    // Remove remote video elements
+    try {
+      remoteVideos.forEach((v, id) => removeRemoteVideo(id));
+    } catch (e) {}
+    
+    console.log('Party stopped');
+    sendResponse({ success: true });
+  }
+
+  if (request.type === 'APPLY_PLAYBACK_CONTROL') {
+    syncManager.handlePlaybackControl(request.control, request.fromUserId);
+    sendResponse({ success: true });
+  }
+
+  if (request.type === 'APPLY_SYNC_PLAYBACK') {
+    syncManager.handlePassiveSync(request.currentTime, request.isPlaying, request.fromUserId);
+    sendResponse({ success: true });
+  }
+
+  if (request.type === 'APPLY_SEEK') {
+    syncManager.handleSeek(request.currentTime, request.isPlaying, request.fromUserId);
+    sendResponse({ success: true });
+  }
+
+  if (request.type === 'APPLY_URL_CHANGE') {
+    console.log('Applying URL change from remote user:', request.url, 'from user:', request.fromUserId);
+    
+    // Save party state before navigation so we can restore after reload
+    const state = stateManager.getState();
+    if (state.partyActive && state.userId && state.roomId) {
+      urlSync.saveState();
+      console.log('Saved party state before navigation');
+    }
+    
+    // Always use hard navigation to ensure Netflix properly loads the new video
+    // This will cause a page reload, but state will be restored automatically
+    window.location.href = request.url;
+    
+    sendResponse({ success: true });
+  }
+});
+
+// --- UI Functions (kept in main file for now) ---
+
+function removeInjectedControls() {
+  const controls = document.getElementById('netflix-party-controls');
+  if (controls) {
+    controls.remove();
+  }
+}
+
+function attachLocalPreview(stream) {
+  let localPreviewVideo = uiManager.getLocalPreviewVideo();
+  
+  // Remove existing preview if any
+  if (localPreviewVideo) {
+    try {
+      if (localPreviewVideo.srcObject) {
+        localPreviewVideo.srcObject = null;
+      }
+    } catch (e) {}
+    localPreviewVideo.remove();
+    localPreviewVideo = null;
+  }
+
+  // Create new video element for local preview
+  const v = document.createElement('video');
+  v.id = 'toperparty-local-preview';
+  v.autoplay = true;
+  v.muted = true; // Always mute local preview to avoid feedback
+  v.playsInline = true;
+  v.style.position = 'fixed';
+  v.style.bottom = '20px';
+  v.style.left = '20px';
+  v.style.width = '240px';
+  v.style.height = '160px';
+  v.style.zIndex = 10001;
+  v.style.border = '2px solid #e50914';
+  v.style.borderRadius = '4px';
+  v.style.transform = 'scaleX(-1)'; // Mirror for natural preview
+
+  try {
+    v.srcObject = stream;
+  } catch (e) {
+    v.src = URL.createObjectURL(stream);
+  }
+
+  document.body.appendChild(v);
+  uiManager.setLocalPreviewVideo(v);
+
+  v.play().catch(function(err) {
+    console.warn('Local preview play() failed (this is usually fine):', err);
+  });
+}
+
+function removeLocalPreview() {
+  const localPreviewVideo = uiManager.getLocalPreviewVideo();
+  if (localPreviewVideo) {
+    try {
+      // Stop the tracks managed by this video's srcObject (only if we own them)
+      if (localPreviewVideo.srcObject) {
+        localPreviewVideo.srcObject.getTracks().forEach(function(track) {
+          track.stop();
+        });
+        localPreviewVideo.srcObject = null;
+      }
+    } catch (e) {
+      console.warn('Error stopping local preview tracks:', e);
+    }
+    localPreviewVideo.remove();
+    uiManager.setLocalPreviewVideo(null);
+  }
+}
+
+function startLocalStreamMonitor(stream) {
+  uiManager.clearStreamMonitorInterval();
+  
+  const interval = setInterval(function monitorLocalStream() {
+    if (!stream) {
+      console.warn('Local stream is null, stopping monitor');
+      uiManager.clearStreamMonitorInterval();
+      return;
+    }
+
+    const tracks = stream.getTracks();
+    if (tracks.length === 0) {
+      console.warn('Local stream has no tracks');
+      uiManager.clearStreamMonitorInterval();
+      return;
+    }
+
+    let allActive = true;
+    tracks.forEach(function(track) {
+      if (track.readyState !== 'live') {
+        console.error('Local stream track not live:', track.kind, 'readyState=', track.readyState);
+        allActive = false;
+      }
+    });
+
+    if (!allActive) {
+      console.warn('Some local stream tracks are not active - may need to restart stream');
+    }
+  }, 5000); // Check every 5 seconds
+  
+  uiManager.setStreamMonitorInterval(interval);
+}
+
+function stopLocalStreamMonitor() {
+  uiManager.clearStreamMonitorInterval();
+}
+
+function addOrReplaceTrack(pc, track, stream) {
+  const senders = pc.getSenders();
+  const existingSender = senders.find(s => s.track && s.track.kind === track.kind);
+  if (existingSender) {
+    existingSender.replaceTrack(track).catch(e => console.warn('Error replacing track', e));
+  } else {
+    try {
+      pc.addTrack(track, stream);
+    } catch (e) {
+      console.warn('Error adding track', e);
+    }
+  }
+}
+
+// --- WebRTC signaling helpers ---
+
+function sendSignal(message) {
+  stateManager.safeSendMessage({ type: 'SIGNAL_SEND', message }, function(resp) {
+    // optionally handle response
+  });
+}
+
+async function handleSignalingMessage(message) {
+  if (!message || !message.type) return;
+  const type = message.type;
+  const from = message.userId || message.from;
+  const to = message.to;
+  const state = stateManager.getState();
+
+  // Ignore messages not for us (if addressed)
+  if (to && to !== state.userId) return;
+
+  if (type === 'JOIN' && from && from !== state.userId) {
+    // Another user joined the room — initiate P2P if we have local media
+    if (!peerConnections.has(from)) {
+      try {
+        const pc = createPeerConnection(from);
+        peerConnections.set(from, pc);
+        if (localStream) {
+          localStream.getTracks().forEach(t => addOrReplaceTrack(pc, t, localStream));
+        }
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        sendSignal({ type: 'OFFER', from: state.userId, to: from, offer: pc.localDescription });
+      } catch (err) {
+        console.error('Error handling JOIN and creating offer:', err);
+        peerConnections.delete(from);
+      }
+    }
+    return;
+  }
+
+  if (type === 'OFFER' && message.offer && from && from !== state.userId) {
+    // Received an offer from a peer
+    let pc = peerConnections.get(from);
+    
+    // If connection exists and is not in a good state for receiving an offer, close and recreate
+    if (pc) {
+      const pcState = pc.signalingState;
+      if (pcState !== 'stable' && pcState !== 'closed') {
+        console.warn('Received offer while in signaling state:', pcState, '- recreating connection');
+        try {
+          pc.close();
+        } catch (e) {}
+        peerConnections.delete(from);
+        pc = null;
+      }
+    }
+    
+    if (!pc) {
+      pc = createPeerConnection(from);
+      peerConnections.set(from, pc);
+    }
+
+    try {
+      await pc.setRemoteDescription(new RTCSessionDescription(message.offer));
+      if (localStream) {
+        localStream.getTracks().forEach(t => addOrReplaceTrack(pc, t, localStream));
+      }
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      sendSignal({ type: 'ANSWER', from: state.userId, to: from, answer: pc.localDescription });
+    } catch (err) {
+      console.error('Error handling offer:', err);
+      // Clean up failed connection
+      peerConnections.delete(from);
+      try { pc.close(); } catch (e) {}
+    }
+    return;
+  }
+
+  if (type === 'ANSWER' && message.answer && from && from !== state.userId) {
+    const pc = peerConnections.get(from);
+    if (pc) {
+      try {
+        // Check if we're expecting an answer
+        if (pc.signalingState === 'have-local-offer') {
+          await pc.setRemoteDescription(new RTCSessionDescription(message.answer));
+        } else {
+          console.warn('Received answer in unexpected state:', pc.signalingState);
+        }
+      } catch (err) {
+        console.error('Error handling answer:', err);
+      }
+    }
+    return;
+  }
+
+  if (type === 'ICE_CANDIDATE' && message.candidate && from && from !== state.userId) {
+    const pc = peerConnections.get(from);
+    if (pc) {
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(message.candidate));
+      } catch (err) {
+        console.warn('Error adding received ICE candidate', err);
+      }
+    }
+    return;
+  }
+
+  if (type === 'LEAVE' && from) {
+    // Peer left
+    const pc = peerConnections.get(from);
+    if (pc) {
+      pc.close();
+      peerConnections.delete(from);
+    }
+    removeRemoteVideo(from);
+    return;
+  }
+}
+
+// Attempt to reconnect to a peer
+async function attemptReconnection(peerId) {
+  const state = stateManager.getState();
+  if (!state.partyActive || !state.userId || !state.roomId) {
+    console.log('Cannot reconnect - party not active');
+    return;
+  }
+
+  const attempts = reconnectionAttempts.get(peerId) || 0;
+  const maxAttempts = 5;
+  const backoffDelay = Math.min(1000 * Math.pow(2, attempts), 30000); // Exponential backoff, max 30s
+
+  if (attempts >= maxAttempts) {
+    console.log('Max reconnection attempts reached for', peerId);
+    reconnectionAttempts.delete(peerId);
+    reconnectionTimeouts.delete(peerId);
+    return;
+  }
+
+  console.log(`Attempting reconnection to ${peerId} (attempt ${attempts + 1}/${maxAttempts}) in ${backoffDelay}ms`);
+  reconnectionAttempts.set(peerId, attempts + 1);
+
+  // Clear any existing timeout for this peer
+  const existingTimeout = reconnectionTimeouts.get(peerId);
+  if (existingTimeout) {
+    clearTimeout(existingTimeout);
+  }
+
+  // Schedule reconnection attempt
+  const timeoutHandle = setTimeout(async function() {
+    console.log('Reconnecting to', peerId);
+    
+    // Remove old connection
+    const oldPc = peerConnections.get(peerId);
+    if (oldPc) {
+      try {
+        oldPc.close();
+      } catch (e) {
+        console.warn('Error closing old peer connection:', e);
+      }
+      peerConnections.delete(peerId);
+    }
+    
+    // Create new connection and send offer
+    try {
+      const pc = createPeerConnection(peerId);
+      peerConnections.set(peerId, pc);
+      
+      if (localStream) {
+        localStream.getTracks().forEach(t => addOrReplaceTrack(pc, t, localStream));
+      }
+      
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      sendSignal({ type: 'OFFER', from: state.userId, to: peerId, offer: pc.localDescription });
+      
+      console.log('Reconnection offer sent to', peerId);
+    } catch (err) {
+      console.error('Failed to create reconnection offer:', err);
+      // Retry with next attempt
+      attemptReconnection(peerId);
+    }
+  }, backoffDelay);
+
+  reconnectionTimeouts.set(peerId, timeoutHandle);
+}
+
+// Clear reconnection state for a peer (called on successful connection)
+function clearReconnectionState(peerId) {
+  reconnectionAttempts.delete(peerId);
+  const timeoutHandle = reconnectionTimeouts.get(peerId);
+  if (timeoutHandle) {
+    clearTimeout(timeoutHandle);
+    reconnectionTimeouts.delete(peerId);
+  }
+}
+
+function createPeerConnection(peerId) {
+  const state = stateManager.getState();
+  const pc = new RTCPeerConnection({
+    iceServers: [
+      { urls: ['stun:stun.l.google.com:19302'] },
+      { urls: ['stun:stun1.l.google.com:19302'] }
+    ]
+  });
+
+  pc.onicecandidate = (event) => {
+    if (event.candidate) {
+      sendSignal({ type: 'ICE_CANDIDATE', from: state.userId, to: peerId, candidate: event.candidate });
+    }
+  };
+
+  pc.ontrack = (event) => {
+    console.log('Received remote track from', peerId, 'track=', event.track && event.track.kind);
+    // Some browsers populate event.streams[0], others deliver individual tracks.
+    let stream = (event.streams && event.streams[0]) || remoteStreams.get(peerId);
+    if (!stream) {
+      stream = new MediaStream();
+      remoteStreams.set(peerId, stream);
+    }
+    if (event.track) {
+      try { 
+        stream.addTrack(event.track);
+        // Monitor track state
+        event.track.onended = function() {
+          console.warn('Remote track ended from', peerId, 'kind=', event.track.kind);
+        };
+        console.log('Added remote track to stream, kind=', event.track.kind, 'readyState=', event.track.readyState);
+      } catch (e) { 
+        console.warn('Failed to add remote track to stream', e); 
+      }
+    }
+    // Only create the video element once, not on every track
+    if (!remoteVideos.has(peerId)) {
+      addRemoteVideo(peerId, stream);
+    }
+  };
+
+  pc.onconnectionstatechange = () => {
+    console.log('PC state', pc.connectionState, 'for', peerId);
+    
+    if (pc.connectionState === 'connected') {
+      // Connection successful - clear any reconnection attempts
+      console.log('Connection established successfully with', peerId);
+      clearReconnectionState(peerId);
+    } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+      // Connection lost - attempt reconnection
+      console.warn('Connection', pc.connectionState, 'with', peerId, '- attempting reconnection');
+      peerConnections.delete(peerId);
+      removeRemoteVideo(peerId);
+      
+      // Attempt to reconnect
+      attemptReconnection(peerId);
+    } else if (pc.connectionState === 'closed') {
+      // Connection intentionally closed - clean up without reconnecting
+      console.log('Connection closed with', peerId);
+      peerConnections.delete(peerId);
+      removeRemoteVideo(peerId);
+      clearReconnectionState(peerId);
+    }
+  };
+
+  return pc;
+}
+
+function addRemoteVideo(peerId, stream) {
+  removeRemoteVideo(peerId);
+  const v = document.createElement('video');
+  v.id = 'toperparty-remote-' + peerId;
+  v.autoplay = true;
+  v.playsInline = true;
+  // Start muted to allow autoplay, then unmute after playing
+  v.muted = true;
+  v.style.position = 'fixed';
+  v.style.bottom = '20px';
+  v.style.right = (20 + (remoteVideos.size * 180)) + 'px';
+  v.style.width = '240px';
+  v.style.height = '160px';
+  v.style.zIndex = 10001;
+  v.style.border = '2px solid #00aaff';
+  v.style.borderRadius = '4px';
+  
+  // Log audio tracks for debugging
+  const audioTracks = stream.getAudioTracks();
+  console.log('Remote stream audio tracks:', audioTracks.length);
+  audioTracks.forEach(function(track) {
+    console.log('Audio track:', track.id, 'enabled=', track.enabled, 'readyState=', track.readyState);
+  });
+  
+  try {
+    v.srcObject = stream;
+  } catch (e) {
+    v.src = URL.createObjectURL(stream);
+  }
+  document.body.appendChild(v);
+  remoteVideos.set(peerId, v);
+  
+  try {
+    v.play().then(function() {
+      // Unmute after successful play to enable audio
+      console.log('Remote video playing, unmuting audio for', peerId);
+      v.muted = false;
+      v.volume = 1.0;
+    }).catch(function(err) {
+      console.warn('Remote video play() failed:', err);
+      // Try unmuting anyway
+      v.muted = false;
+    });
+  } catch (e) {
+    console.error('Exception calling play():', e);
+  }
+}
+
+function removeRemoteVideo(peerId) {
+  const v = remoteVideos.get(peerId);
+  if (v) {
+    try {
+      // Do NOT stop remote tracks - they are managed by the sender
+      // Just clear the srcObject to release the reference
+      if (v.srcObject) {
+        v.srcObject = null;
+      }
+    } catch (e) {}
+    v.remove();
+    remoteVideos.delete(peerId);
+  }
+  // Also clean up the stream reference
+  remoteStreams.delete(peerId);
+}
+
+})();
+
+/******/ })()
+;
 //# sourceMappingURL=content-script.js.map

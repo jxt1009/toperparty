@@ -215,17 +215,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.type === 'APPLY_PLAYBACK_CONTROL') {
-    syncManager.handlePlaybackControl(request);
+    syncManager.handlePlaybackControl(request.control, request.fromUserId);
     sendResponse({ success: true });
   }
 
   if (request.type === 'APPLY_SYNC_PLAYBACK') {
-    syncManager.handlePassiveSync(request);
+    syncManager.handlePassiveSync(request.currentTime, request.isPlaying, request.fromUserId);
     sendResponse({ success: true });
   }
 
   if (request.type === 'APPLY_SEEK') {
-    syncManager.handleSeek(request);
+    syncManager.handleSeek(request.currentTime, request.isPlaying, request.fromUserId);
     sendResponse({ success: true });
   }
 

@@ -1,1 +1,52 @@
-window.__toperparty_netflix={getPlayer:function(){try{const t=window.netflix.appContext.state.playerApp.getAPI().videoPlayer,e=t.getAllPlayerSessionIds()[0];return t.getVideoPlayerBySessionId(e)}catch(t){return console.warn("Failed to get Netflix player:",t),null}},play:function(){const t=this.getPlayer();t&&t.play()},pause:function(){const t=this.getPlayer();t&&t.pause()},seek:function(t){const e=this.getPlayer();e&&e.seek(t)},getCurrentTime:function(){const t=this.getPlayer();return t?t.getCurrentTime():0},isPaused:function(){const t=this.getPlayer();return!t||t.isPaused()}},document.addEventListener("__toperparty_command",function(t){const{command:e,args:n}=t.detail;if(window.__toperparty_netflix[e]){const t=window.__toperparty_netflix[e].apply(window.__toperparty_netflix,n||[]);document.dispatchEvent(new CustomEvent("__toperparty_response",{detail:{command:e,result:t}}))}});
+// netflix-api-bridge.js - Injected into page context to access Netflix API
+// This runs in the page context, not the extension context
+
+(function() {
+  // Netflix Player API Helper - runs in page context
+  window.__toperparty_netflix = {
+    getPlayer: function() {
+      try {
+        const videoPlayer = window.netflix.appContext.state.playerApp.getAPI().videoPlayer;
+        const sessionId = videoPlayer.getAllPlayerSessionIds()[0];
+        return videoPlayer.getVideoPlayerBySessionId(sessionId);
+      } catch (e) {
+        console.warn('Failed to get Netflix player:', e);
+        return null;
+      }
+    },
+    
+    play: function() {
+      const player = this.getPlayer();
+      if (player) player.play();
+    },
+    
+    pause: function() {
+      const player = this.getPlayer();
+      if (player) player.pause();
+    },
+    
+    seek: function(timeMs) {
+      const player = this.getPlayer();
+      if (player) player.seek(timeMs);
+    },
+    
+    getCurrentTime: function() {
+      const player = this.getPlayer();
+      return player ? player.getCurrentTime() : 0;
+    },
+    
+    isPaused: function() {
+      const player = this.getPlayer();
+      return player ? player.isPaused() : true;
+    }
+  };
+  
+  // Listen for commands from content script
+  document.addEventListener('__toperparty_command', function(e) {
+    const { command, args } = e.detail;
+    if (window.__toperparty_netflix[command]) {
+      const result = window.__toperparty_netflix[command].apply(window.__toperparty_netflix, args || []);
+      document.dispatchEvent(new CustomEvent('__toperparty_response', { detail: { command, result } }));
+    }
+  });
+})();
