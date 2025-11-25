@@ -1129,6 +1129,7 @@ let localStream = null;
     
     // Notify background that we need to rejoin
     setTimeout(function() {
+      console.log('Triggering party reset and restoration...');
       chrome.runtime.sendMessage({
         type: 'RESTORE_PARTY',
         roomId: restorationState.roomId,

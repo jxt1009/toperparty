@@ -42,6 +42,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   if (request.type === 'RESTORE_PARTY') {
     console.log('Restoring party after navigation:', request.roomId);
+    
+    // Force a clean slate by stopping any existing party session first (Reset behavior)
+    console.log('Performing full party reset (Stop -> Start) for restoration');
+    stopParty();
+
     // Use the saved userId instead of generating a new one
     if (request.userId) {
       userId = request.userId;
