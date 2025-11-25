@@ -1,13 +1,8 @@
 version: "3.8"
-
 services:
   signaling:
-    image: node:20-alpine
+    build: ./server
     container_name: signaling
-    working_dir: /app
-    volumes:
-      - ./server:/app
-    command: ["node", "server.js"]
     ports:
-      - "4001:4001"   # Expose to host
+      - "4001:4001"
     restart: unless-stopped
