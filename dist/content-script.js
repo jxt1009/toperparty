@@ -797,6 +797,8 @@ const remoteVideos = uiManager.getRemoteVideos();
 const remoteStreams = uiManager.getRemoteStreams();
 const reconnectionAttempts = webrtcManager.reconnectionAttempts;
 const reconnectionTimeouts = webrtcManager.reconnectionTimeouts;
+// Track peers that have explicitly left so we don't try to reconnect to them
+const peersThatLeft = new Set();
 
 // Check if we need to restore party state after navigation
 (function checkRestorePartyState() {
@@ -1183,6 +1185,8 @@ async function handleSignalingMessage(message) {
 
   if (type === 'JOIN' && from && from !== state.userId) {
     // Another user joined the room — initiate P2P if we have local media
+    // Clear any previous explicit-leave state for this peer
+    peersThatLeft.delete(from);
     if (!peerConnections.has(from)) {
       try {
         const pc = createPeerConnection(from);
@@ -1270,12 +1274,16 @@ async function handleSignalingMessage(message) {
   }
 
   if (type === 'LEAVE' && from) {
-    // Peer left
+    // Peer left explicitly
+    peersThatLeft.add(from);
     const pc = peerConnections.get(from);
     if (pc) {
-      pc.close();
+      try {
+        pc.close();
+      } catch (e) {}
       peerConnections.delete(from);
     }
+    clearReconnectionState(from);
     removeRemoteVideo(from);
     return;
   }
@@ -1286,6 +1294,13 @@ async function attemptReconnection(peerId) {
   const state = stateManager.getState();
   if (!state.partyActive || !state.userId || !state.roomId) {
     console.log('Cannot reconnect - party not active');
+    return;
+  }
+
+  // Don't attempt to reconnect to peers that have explicitly left
+  if (peersThatLeft.has(peerId)) {
+    console.log('Not attempting reconnection to peer that has explicitly left:', peerId);
+    clearReconnectionState(peerId);
     return;
   }
 
@@ -1408,12 +1423,19 @@ function createPeerConnection(peerId) {
       clearReconnectionState(peerId);
     } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
       // Connection lost - attempt reconnection
-      console.warn('Connection', pc.connectionState, 'with', peerId, '- attempting reconnection');
-      peerConnections.delete(peerId);
-      removeRemoteVideo(peerId);
-      
-      // Attempt to reconnect
-      attemptReconnection(peerId);
+      if (peersThatLeft.has(peerId)) {
+        console.warn('Connection', pc.connectionState, 'with peer that has left', peerId, '- not reconnecting');
+        peerConnections.delete(peerId);
+        removeRemoteVideo(peerId);
+        clearReconnectionState(peerId);
+      } else {
+        console.warn('Connection', pc.connectionState, 'with', peerId, '- attempting reconnection');
+        peerConnections.delete(peerId);
+        removeRemoteVideo(peerId);
+        
+        // Attempt to reconnect
+        attemptReconnection(peerId);
+      }
     } else if (pc.connectionState === 'closed') {
       // Connection intentionally closed - clean up without reconnecting
       console.log('Connection closed with', peerId);
