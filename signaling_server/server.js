@@ -12,6 +12,3 @@ wss.on('connection', (ws) => {
   });
 });
 
-server.listen(3000, () => {
-  console.log("Signaling server listening on port 3000");
-});
