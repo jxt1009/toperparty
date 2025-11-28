@@ -36,8 +36,9 @@ export function createReconnectionManager({ stateManager, peerConnections, peers
       try {
         const pc = createPeer(peerId);
         peerConnections.set(peerId, pc);
-        if (localStream) {
-          localStream.getTracks().forEach(t => addOrReplaceTrack(pc, t, localStream));
+        const stream = typeof localStream === 'function' ? localStream() : localStream;
+        if (stream) {
+          stream.getTracks().forEach(t => addOrReplaceTrack(pc, t, stream));
         }
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
