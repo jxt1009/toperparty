@@ -74,23 +74,39 @@ export class WebRTCManager {
   }
 
   async handleSignal(message) {
-    if (!message || !message.type) return;
+    console.log('[WebRTCManager] handleSignal called with:', message);
+    if (!message || !message.type) {
+      console.warn('[WebRTCManager] Invalid message:', message);
+      return;
+    }
     const type = message.type;
     const from = message.userId || message.from;
     const to = message.to;
     const state = this.stateManager.getState();
-    if (to && to !== state.userId) return;
+    console.log('[WebRTCManager] Processing signal type:', type, 'from:', from, 'to:', to, 'myId:', state.userId);
+    
+    if (to && to !== state.userId) {
+      console.log('[WebRTCManager] Ignoring message not meant for me');
+      return;
+    }
 
     if (type === 'JOIN' && from && from !== state.userId) {
+      console.log('[WebRTCManager] Dispatching to handleJoin');
       await this.signalingHandlers.handleJoin(from);
     } else if (type === 'OFFER' && message.offer && from && from !== state.userId) {
+      console.log('[WebRTCManager] Dispatching to handleOffer');
       await this.signalingHandlers.handleOffer(from, message.offer);
     } else if (type === 'ANSWER' && message.answer && from && from !== state.userId) {
+      console.log('[WebRTCManager] Dispatching to handleAnswer');
       await this.signalingHandlers.handleAnswer(from, message.answer);
     } else if (type === 'ICE_CANDIDATE' && message.candidate && from && from !== state.userId) {
+      console.log('[WebRTCManager] Dispatching to handleIceCandidate');
       await this.signalingHandlers.handleIceCandidate(from, message.candidate);
     } else if (type === 'LEAVE' && from) {
+      console.log('[WebRTCManager] Dispatching to handleLeave');
       this.signalingHandlers.handleLeave(from);
+    } else {
+      console.log('[WebRTCManager] Signal not handled - type:', type, 'from:', from, 'conditions not met');
     }
   }
 
