@@ -9,23 +9,31 @@ export function createPeerConnectionFactory({ stateManager, sendSignal, remoteSt
     });
     pc.onicecandidate = (event) => {
       if (event.candidate) {
+        console.log('[PeerConnection] ICE candidate for peer:', peerId, event.candidate);
         sendSignal({ type: 'ICE_CANDIDATE', from: state.userId, to: peerId, candidate: event.candidate });
       }
     };
     pc.ontrack = (event) => {
+      console.log('[PeerConnection] ontrack fired for peer:', peerId, 'track:', event.track, 'streams:', event.streams);
       let stream = (event.streams && event.streams[0]) || remoteStreams.get(peerId);
       if (!stream) {
+        console.log('[PeerConnection] Creating new MediaStream for peer:', peerId);
         stream = new MediaStream();
         remoteStreams.set(peerId, stream);
       }
       if (event.track) {
-        try { stream.addTrack(event.track); } catch (e) {}
+        console.log('[PeerConnection] Adding track to stream:', event.track.kind, event.track.id);
+        try { stream.addTrack(event.track); } catch (e) {
+          console.warn('[PeerConnection] Error adding track:', e);
+        }
       }
       if (!remoteVideos.has(peerId)) {
+        console.log('[PeerConnection] Adding remote video for peer:', peerId, 'stream tracks:', stream.getTracks().length);
         addRemoteVideo(peerId, stream);
       }
     };
     pc.onconnectionstatechange = () => {
+      console.log('[PeerConnection] Connection state changed for peer:', peerId, '→', pc.connectionState);
       if (pc.connectionState === 'connected') {
         clearReconnection(peerId);
       } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {

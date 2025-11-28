@@ -1,5 +1,6 @@
 export function createRemoteVideoManager(remoteVideos) {
   function add(peerId, stream) {
+    console.log('[RemoteVideoManager] Adding remote video for peer:', peerId, 'stream:', stream, 'tracks:', stream.getTracks());
     remove(peerId);
     const v = document.createElement('video');
     v.id = 'toperparty-remote-' + peerId;
@@ -14,18 +15,33 @@ export function createRemoteVideoManager(remoteVideos) {
     v.style.zIndex = 10001;
     v.style.border = '2px solid #00aaff';
     v.style.borderRadius = '4px';
-    try { v.srcObject = stream; } catch (e) { v.src = URL.createObjectURL(stream); }
+    console.log('[RemoteVideoManager] Created video element:', v.id, 'at position:', v.style.right);
+    try { 
+      v.srcObject = stream;
+      console.log('[RemoteVideoManager] Set srcObject successfully');
+    } catch (e) { 
+      console.warn('[RemoteVideoManager] srcObject failed, trying createObjectURL:', e);
+      v.src = URL.createObjectURL(stream); 
+    }
     document.body.appendChild(v);
+    console.log('[RemoteVideoManager] Appended video to body');
     remoteVideos.set(peerId, v);
     try {
       v.play().then(() => {
+        console.log('[RemoteVideoManager] Video playing, unmuting');
         v.muted = false;
         v.volume = 1.0;
-      }).catch(() => { v.muted = false; });
-    } catch (e) {}
+      }).catch((e) => { 
+        console.warn('[RemoteVideoManager] Play failed:', e);
+        v.muted = false; 
+      });
+    } catch (e) {
+      console.warn('[RemoteVideoManager] Error calling play:', e);
+    }
   }
   
   function remove(peerId) {
+    console.log('[RemoteVideoManager] Removing remote video for peer:', peerId);
     const v = remoteVideos.get(peerId);
     if (v) {
       try { if (v.srcObject) v.srcObject = null; } catch (e) {}
