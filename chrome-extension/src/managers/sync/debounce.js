@@ -10,10 +10,10 @@ export class EventDebouncer {
   schedule(fn) {
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => {
-      const events = this.events;
-      this.events = new Set();
       this.timer = null;
-      fn(events);
+      fn();
+       // Clear events after callback runs (callback reads this.events directly)
+       this.events.clear();
     }, this.delayMs);
   }
   cancel() {

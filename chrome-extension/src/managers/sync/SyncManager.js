@@ -88,11 +88,15 @@ export class SyncManager {
     const currentTime = video.currentTime;
     const isPlaying = !video.paused;
     const events = new Set(this.debouncer.events);
+    console.log('[SyncManager] Broadcasting local state - events:', Array.from(events), 'time:', currentTime.toFixed(2), 'playing:', isPlaying);
+    
     // Priority: Seek > Play/Pause
     if (events.has('seeked')) {
+      console.log('[SyncManager] Sending SEEK:', currentTime.toFixed(2), 'playing:', isPlaying);
       this.state.safeSendMessage({ type: 'SEEK', currentTime, isPlaying });
     } else if (events.has('play') || events.has('pause')) {
       const control = isPlaying ? 'play' : 'pause';
+      console.log('[SyncManager] Sending PLAY_PAUSE:', control, 'at time:', currentTime.toFixed(2));
       this.state.safeSendMessage({ type: 'PLAY_PAUSE', control, timestamp: currentTime });
     }
   }
