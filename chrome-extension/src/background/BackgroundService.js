@@ -61,6 +61,8 @@ export class BackgroundService {
         chrome.tabs.query({ url: 'https://www.netflix.com/*' }, (tabs) => {
           tabs.forEach(tab => {
             chrome.tabs.sendMessage(tab.id, { type: 'PARTY_STARTED', userId: this.userId, roomId: this.roomId }).catch(() => {});
+            // After party starts, request initial sync
+            chrome.tabs.sendMessage(tab.id, { type: 'REQUEST_INITIAL_SYNC_AND_PLAY' }).catch(() => {});
           });
         });
         resolve();
@@ -160,16 +162,6 @@ export class BackgroundService {
         chrome.tabs.query({ url: 'https://www.netflix.com/*' }, (tabs) => {
           tabs.forEach(tab => {
             chrome.tabs.sendMessage(tab.id, { type: 'APPLY_SYNC_RESPONSE', currentTime: message.currentTime, isPlaying: message.isPlaying, fromUserId: message.fromUserId, url: message.url }).catch(() => {});
-          });
-        });
-      }
-
-      // When someone joins, have the new person request sync
-      if (message.type === 'JOIN' && message.userId === this.userId) {
-        console.log('[BackgroundService] We just joined - requesting sync from other clients');
-        chrome.tabs.query({ url: 'https://www.netflix.com/*' }, (tabs) => {
-          tabs.forEach(tab => {
-            chrome.tabs.sendMessage(tab.id, { type: 'REQUEST_INITIAL_SYNC_AND_PLAY' }).catch(() => {});
           });
         });
       }
