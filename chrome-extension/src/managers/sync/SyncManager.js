@@ -134,7 +134,15 @@ export class SyncManager {
     });
   }
 
+  isOnWatchPage() {
+    return window.location.pathname.startsWith('/watch');
+  }
+
   broadcastPlay(video) {
+    if (!this.isOnWatchPage()) {
+      console.log('[SyncManager] Ignoring PLAY event - not on /watch page');
+      return;
+    }
     console.log('[SyncManager] Broadcasting PLAY event');
     this.state.safeSendMessage({ 
       type: 'PLAY_PAUSE', 
@@ -144,6 +152,10 @@ export class SyncManager {
   }
 
   broadcastPause(video) {
+    if (!this.isOnWatchPage()) {
+      console.log('[SyncManager] Ignoring PAUSE event - not on /watch page');
+      return;
+    }
     console.log('[SyncManager] Broadcasting PAUSE event');
     this.state.safeSendMessage({ 
       type: 'PLAY_PAUSE', 
@@ -153,6 +165,10 @@ export class SyncManager {
   }
 
   broadcastSeek(video) {
+    if (!this.isOnWatchPage()) {
+      console.log('[SyncManager] Ignoring SEEK event - not on /watch page');
+      return;
+    }
     console.log('[SyncManager] Broadcasting SEEK event at', video.currentTime);
     this.state.safeSendMessage({ 
       type: 'SEEK', 

@@ -13,10 +13,18 @@ export function createRemoteHandlers({ state, netflix, lock, isInitializedRef })
         return;
       }
       
+      const currentUrl = window.location.href;
+      const isOnWatchPage = window.location.pathname.startsWith('/watch');
+      
+      // If we're on browse page, don't send sync response
+      if (!isOnWatchPage) {
+        console.log('[SyncManager] On browse page, not sending sync response');
+        return;
+      }
+      
       try {
         const currentTime = await netflix.getCurrentTime();
         const isPaused = await netflix.isPaused();
-        const currentUrl = window.location.href;
         
         if (currentTime == null) {
           console.log('[SyncManager] Invalid playback state, ignoring sync request');
@@ -50,6 +58,22 @@ export function createRemoteHandlers({ state, netflix, lock, isInitializedRef })
       
       // Check if we need to navigate to a different URL
       const currentUrl = window.location.href;
+      const isOnBrowse = window.location.pathname.startsWith('/browse');
+      const otherIsOnWatch = url && (new URL(url).pathname.startsWith('/watch'));
+      
+      // If we're on browse and they're on /watch, always navigate to their page
+      if (isOnBrowse && otherIsOnWatch) {
+        console.log('[SyncManager] On browse page, other user on /watch - navigating to their show');
+        sessionStorage.setItem('toperparty_pending_sync', JSON.stringify({
+          currentTime,
+          isPlaying,
+          timestamp: Date.now()
+        }));
+        window.location.href = url;
+        return;
+      }
+      
+      // Regular URL mismatch handling
       if (url && url !== currentUrl) {
         console.log('[SyncManager] URL mismatch - navigating from', currentUrl, 'to', url);
         // Store the sync state to apply after navigation
