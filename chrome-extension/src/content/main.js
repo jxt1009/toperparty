@@ -201,12 +201,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     syncManager.handleSyncResponse(request.currentTime, request.isPlaying, request.fromUserId, request.url);
   }
 
-  if (request.type === 'RESET_SYNC') {
-    console.log('[Content Script] Resetting sync manager - someone joined the party');
-    syncManager.teardown();
-    syncManager.setup().catch(err => {
-      console.error('[Content Script] Failed to reset sync manager:', err);
-    });
+  if (request.type === 'REQUEST_INITIAL_SYNC_AND_PLAY') {
+    console.log('[Content Script] Requesting initial sync and will auto-play when synced');
+    // Request sync from other clients
+    stateManager.safeSendMessage({ type: 'REQUEST_SYNC' });
   }
 });
 

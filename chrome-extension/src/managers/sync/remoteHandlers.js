@@ -102,9 +102,13 @@ export function createRemoteHandlers({ state, netflix, lock, isInitializedRef })
       await applyRemote('initial-sync', 1500, async () => {
         await netflix.seek(currentTime * 1000);
         const localPaused = await netflix.isPaused();
+        
+        // Always sync to the remote state
         if (isPlaying && localPaused) {
+          console.log('[SyncManager] Remote is playing, starting playback');
           await netflix.play();
         } else if (!isPlaying && !localPaused) {
+          console.log('[SyncManager] Remote is paused, pausing playback');
           await netflix.pause();
         }
       });
