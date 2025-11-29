@@ -34,10 +34,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.type === 'PLAY_PAUSE') {
+    console.log('[Background] Broadcasting PLAY_PAUSE:', request.control, 'at', request.currentTime);
     backgroundService.broadcastMessage({
-      type: 'PLAYBACK_CONTROL',
+      type: 'PLAY_PAUSE',
       control: request.control,
-      timestamp: request.timestamp,
+      currentTime: request.currentTime,
       userId: backgroundService.userId
     });
     sendResponse({ success: true });

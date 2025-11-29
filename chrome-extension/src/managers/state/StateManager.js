@@ -27,7 +27,15 @@ export class StateManager {
     try { return chrome.runtime && chrome.runtime.id; } catch { return false; }
   }
   safeSendMessage(message, callback) {
-    if (!this.isExtensionContextValid()) return;
-    try { chrome.runtime.sendMessage(message, callback); } catch (e) { console.warn('Failed to send message:', e.message); }
+    if (!this.isExtensionContextValid()) {
+      console.warn('[StateManager] Extension context invalid, cannot send message');
+      return;
+    }
+    console.log('[StateManager] Sending message:', message.type, message);
+    try { 
+      chrome.runtime.sendMessage(message, callback); 
+    } catch (e) { 
+      console.warn('[StateManager] Failed to send message:', e.message); 
+    }
   }
 }

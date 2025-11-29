@@ -110,6 +110,6 @@ export class SyncManager {
   // Remote event handlers
   handleRequestSync(fromUserId) { return this.remote.handleRequestSync(fromUserId); }
   handleSyncResponse(currentTime, isPlaying, fromUserId) { return this.remote.handleSyncResponse(currentTime, isPlaying, fromUserId); }
-  handlePlaybackControl(control, fromUserId) { return this.remote.handlePlaybackControl(control, fromUserId); }
+  handlePlaybackControl(control, currentTime, fromUserId) { return this.remote.handlePlaybackControl(control, currentTime, fromUserId); }
   handleSeek(currentTime, isPlaying, fromUserId) { return this.remote.handleSeek(currentTime, isPlaying, fromUserId); }
 }

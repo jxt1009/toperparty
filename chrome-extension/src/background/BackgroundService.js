@@ -112,10 +112,11 @@ export class BackgroundService {
         });
       });
       
-      if (message.type === 'PLAYBACK_CONTROL' && message.userId !== this.userId) {
+      if (message.type === 'PLAY_PAUSE' && message.userId !== this.userId) {
+        console.log('[BackgroundService] Forwarding PLAY_PAUSE to content:', message.control, 'at', message.currentTime, 'from', message.userId);
         chrome.tabs.query({ url: 'https://www.netflix.com/*' }, (tabs) => {
           tabs.forEach(tab => {
-            chrome.tabs.sendMessage(tab.id, { type: 'APPLY_PLAYBACK_CONTROL', control: message.control, timestamp: message.timestamp, fromUserId: message.userId }).catch(() => {});
+            chrome.tabs.sendMessage(tab.id, { type: 'APPLY_PLAYBACK_CONTROL', control: message.control, currentTime: message.currentTime, fromUserId: message.userId }).catch(() => {});
           });
         });
       }
@@ -129,6 +130,7 @@ export class BackgroundService {
       }
       
       if (message.type === 'SEEK' && message.userId !== this.userId) {
+        console.log('[BackgroundService] Forwarding SEEK to content:', message.currentTime, 'playing:', message.isPlaying, 'from', message.userId);
         chrome.tabs.query({ url: 'https://www.netflix.com/*' }, (tabs) => {
           tabs.forEach(tab => {
             chrome.tabs.sendMessage(tab.id, { type: 'APPLY_SEEK', currentTime: message.currentTime, isPlaying: message.isPlaying, fromUserId: message.userId }).catch(() => {});
@@ -166,7 +168,10 @@ export class BackgroundService {
 
   broadcastMessage(message) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      console.log('[BackgroundService] Broadcasting message:', message.type, message);
       this.ws.send(JSON.stringify(message));
+    } else {
+      console.warn('[BackgroundService] Cannot broadcast - WebSocket not open:', this.ws ? this.ws.readyState : 'no ws');
     }
   }
 

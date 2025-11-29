@@ -57,10 +57,18 @@ export function createRemoteHandlers({ state, netflix, lock, isInitializedRef })
         }
       });
     },
-    async handlePlaybackControl(control, fromUserId) {
-      console.log('[SyncManager] Remote', control.toUpperCase(), 'from', fromUserId);
+    async handlePlaybackControl(control, currentTime, fromUserId) {
+      console.log('[SyncManager] Remote', control.toUpperCase(), 'at', currentTime, 'from', fromUserId);
       
-      await applyRemote(control, 800, async () => {
+      await applyRemote(control, 1000, async () => {
+        // Seek to the exact position first
+        if (currentTime != null) {
+          const currentTimeMs = currentTime * 1000;
+          await netflix.seek(currentTimeMs);
+          console.log('[SyncManager] Seeked to', currentTime.toFixed(2) + 's before', control);
+        }
+        
+        // Then apply play/pause
         if (control === 'play') {
           await netflix.play();
         } else {

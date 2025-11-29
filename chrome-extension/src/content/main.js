@@ -125,7 +125,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.type === 'APPLY_PLAYBACK_CONTROL') {
-    syncManager.handlePlaybackControl(request.control, request.fromUserId);
+    console.log('[Content Script] Applying playback control:', request.control, 'at', request.currentTime, 'from', request.fromUserId);
+    syncManager.handlePlaybackControl(request.control, request.currentTime, request.fromUserId);
   }
 
   // Passive sync removed - using event-based sync only
