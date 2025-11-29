@@ -163,6 +163,16 @@ export class BackgroundService {
           });
         });
       }
+
+      // When someone joins, reset sync for all clients
+      if (message.type === 'JOIN' && message.userId !== this.userId) {
+        console.log('[BackgroundService] Someone joined - triggering sync reset for all clients');
+        chrome.tabs.query({ url: 'https://www.netflix.com/*' }, (tabs) => {
+          tabs.forEach(tab => {
+            chrome.tabs.sendMessage(tab.id, { type: 'RESET_SYNC' }).catch(() => {});
+          });
+        });
+      }
     } catch (err) {
       console.error('Error handling signaling message:', err);
     }

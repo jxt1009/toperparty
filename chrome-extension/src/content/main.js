@@ -200,6 +200,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     console.log('[Content Script] Applying sync response from', request.fromUserId, 'URL:', request.url);
     syncManager.handleSyncResponse(request.currentTime, request.isPlaying, request.fromUserId, request.url);
   }
+
+  if (request.type === 'RESET_SYNC') {
+    console.log('[Content Script] Resetting sync manager - someone joined the party');
+    syncManager.teardown();
+    syncManager.setup().catch(err => {
+      console.error('[Content Script] Failed to reset sync manager:', err);
+    });
+  }
 });
 
 window.addEventListener('beforeunload', () => {
