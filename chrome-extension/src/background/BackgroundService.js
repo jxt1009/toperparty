@@ -156,9 +156,10 @@ export class BackgroundService {
       }
       
       if (message.type === 'SYNC_RESPONSE' && message.to === this.userId) {
+        console.log('[BackgroundService] Received SYNC_RESPONSE for me, forwarding to content with URL:', message.url);
         chrome.tabs.query({ url: 'https://www.netflix.com/*' }, (tabs) => {
           tabs.forEach(tab => {
-            chrome.tabs.sendMessage(tab.id, { type: 'APPLY_SYNC_RESPONSE', currentTime: message.currentTime, isPlaying: message.isPlaying, fromUserId: message.fromUserId }).catch(() => {});
+            chrome.tabs.sendMessage(tab.id, { type: 'APPLY_SYNC_RESPONSE', currentTime: message.currentTime, isPlaying: message.isPlaying, fromUserId: message.fromUserId, url: message.url }).catch(() => {});
           });
         });
       }

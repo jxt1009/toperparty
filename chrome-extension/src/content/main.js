@@ -169,7 +169,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.type === 'APPLY_SYNC_RESPONSE') {
-    syncManager.handleSyncResponse(request.currentTime, request.isPlaying, request.fromUserId);
+    console.log('[Content Script] Applying sync response from', request.fromUserId, 'URL:', request.url);
+    syncManager.handleSyncResponse(request.currentTime, request.isPlaying, request.fromUserId, request.url);
   }
 });
 

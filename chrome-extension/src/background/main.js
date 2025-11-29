@@ -83,12 +83,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.type === 'SYNC_RESPONSE') {
+    console.log('[Background] Forwarding SYNC_RESPONSE to', request.targetUserId, 'with URL:', request.url);
     if (backgroundService.ws && backgroundService.ws.readyState === WebSocket.OPEN) {
       backgroundService.ws.send(JSON.stringify({
         type: 'SYNC_RESPONSE',
         to: request.targetUserId,
         currentTime: request.currentTime,
         isPlaying: request.isPlaying,
+        url: request.url,
         fromUserId: backgroundService.userId
       }));
     }

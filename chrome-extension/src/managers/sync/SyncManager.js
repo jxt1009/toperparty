@@ -34,6 +34,49 @@ export class SyncManager {
       }
       
       console.log('[SyncManager] Video element found, setting up event listeners');
+      
+      // Check for pending sync from URL navigation
+      const pendingSyncStr = sessionStorage.getItem('toperparty_pending_sync');
+      if (pendingSyncStr) {
+        try {
+          const pendingSync = JSON.parse(pendingSyncStr);
+          if (Date.now() - pendingSync.timestamp < 10000) {
+            console.log('[SyncManager] Applying pending sync from URL navigation');
+            sessionStorage.removeItem('toperparty_pending_sync');
+            this.isInitializedRef.set(true);
+            
+            // Apply the pending sync state
+            this.lock.set(1500);
+            await this.netflix.seek(pendingSync.currentTime * 1000);
+            const isPaused = await this.netflix.isPaused();
+            if (pendingSync.isPlaying && isPaused) {
+              await this.netflix.play();
+            } else if (!pendingSync.isPlaying && !isPaused) {
+              await this.netflix.pause();
+            }
+            
+            const listeners = attachPlaybackListeners({
+              video,
+              state: this.state,
+              isInitializedRef: this.isInitializedRef,
+              lock: this.lock,
+              onPlay: (vid) => this.broadcastPlay(vid),
+              onPause: (vid) => this.broadcastPause(vid),
+              onSeek: (vid) => this.broadcastSeek(vid)
+            });
+            this.listeners = listeners;
+            console.log('[SyncManager] Setup complete with pending sync applied');
+            return;
+          } else {
+            console.log('[SyncManager] Pending sync expired, ignoring');
+            sessionStorage.removeItem('toperparty_pending_sync');
+          }
+        } catch (e) {
+          console.error('[SyncManager] Error applying pending sync:', e);
+          sessionStorage.removeItem('toperparty_pending_sync');
+        }
+      }
+      
       this.isInitializedRef.set(false);
       
       // Request initial sync from other clients
@@ -120,7 +163,7 @@ export class SyncManager {
 
   // Remote event handlers
   handleRequestSync(fromUserId) { return this.remote.handleRequestSync(fromUserId); }
-  handleSyncResponse(currentTime, isPlaying, fromUserId) { return this.remote.handleSyncResponse(currentTime, isPlaying, fromUserId); }
+  handleSyncResponse(currentTime, isPlaying, fromUserId, url) { return this.remote.handleSyncResponse(currentTime, isPlaying, fromUserId, url); }
   handlePlaybackControl(control, currentTime, fromUserId) { return this.remote.handlePlaybackControl(control, currentTime, fromUserId); }
   handleSeek(currentTime, isPlaying, fromUserId) { return this.remote.handleSeek(currentTime, isPlaying, fromUserId); }
 }

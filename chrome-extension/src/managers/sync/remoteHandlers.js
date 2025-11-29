@@ -16,6 +16,7 @@ export function createRemoteHandlers({ state, netflix, lock, isInitializedRef })
       try {
         const currentTime = await netflix.getCurrentTime();
         const isPaused = await netflix.isPaused();
+        const currentUrl = window.location.href;
         
         if (currentTime == null) {
           console.log('[SyncManager] Invalid playback state, ignoring sync request');
@@ -23,17 +24,18 @@ export function createRemoteHandlers({ state, netflix, lock, isInitializedRef })
         }
         
         const currentTimeSeconds = currentTime / 1000;
-        console.log('[SyncManager] Sending SYNC_RESPONSE to', fromUserId, 'at', currentTimeSeconds.toFixed(2) + 's', isPaused ? 'paused' : 'playing');
+        console.log('[SyncManager] Sending SYNC_RESPONSE to', fromUserId, 'at', currentTimeSeconds.toFixed(2) + 's', isPaused ? 'paused' : 'playing', 'URL:', currentUrl);
         
         state.safeSendMessage({
           type: 'SYNC_RESPONSE',
           targetUserId: fromUserId,
           currentTime: currentTimeSeconds,
-          isPlaying: !isPaused
+          isPlaying: !isPaused,
+          url: currentUrl
         });
       } catch (e) { console.error('[SyncManager] Error handling sync request:', e); }
     },
-    async handleSyncResponse(currentTime, isPlaying, fromUserId) {
+    async handleSyncResponse(currentTime, isPlaying, fromUserId, url) {
       if (isInitializedRef.get()) {
         console.log('[SyncManager] Already initialized, ignoring late SYNC_RESPONSE');
         return;
@@ -44,7 +46,23 @@ export function createRemoteHandlers({ state, netflix, lock, isInitializedRef })
         return;
       }
       
-      console.log('[SyncManager] Initial sync from', fromUserId, 'seeking to', currentTime.toFixed(2) + 's', isPlaying ? 'playing' : 'paused');
+      console.log('[SyncManager] Initial sync from', fromUserId, 'seeking to', currentTime.toFixed(2) + 's', isPlaying ? 'playing' : 'paused', 'URL:', url);
+      
+      // Check if we need to navigate to a different URL
+      const currentUrl = window.location.href;
+      if (url && url !== currentUrl) {
+        console.log('[SyncManager] URL mismatch - navigating from', currentUrl, 'to', url);
+        // Store the sync state to apply after navigation
+        sessionStorage.setItem('toperparty_pending_sync', JSON.stringify({
+          currentTime,
+          isPlaying,
+          timestamp: Date.now()
+        }));
+        // Navigate to the correct URL
+        window.location.href = url;
+        return;
+      }
+      
       isInitializedRef.set(true);
       
       await applyRemote('initial-sync', 1500, async () => {
