@@ -4,9 +4,43 @@ export class URLSync {
     this.urlMonitorInterval = null;
     this.lastUrl = null;
   }
-  start() { this.lastUrl = window.location.href; }
+  
+  start() { 
+    this.lastUrl = window.location.href;
+    console.log('[URLSync] Starting URL monitoring, current URL:', this.lastUrl);
+    
+    // Clear any existing interval
+    if (this.urlMonitorInterval) {
+      clearInterval(this.urlMonitorInterval);
+    }
+    
+    // Monitor for URL changes every 500ms
+    this.urlMonitorInterval = setInterval(() => {
+      const currentUrl = window.location.href;
+      if (currentUrl !== this.lastUrl) {
+        console.log('[URLSync] URL changed from', this.lastUrl, 'to', currentUrl);
+        this.lastUrl = currentUrl;
+        
+        // Broadcast URL change to other clients
+        const state = this.stateManager.getState();
+        if (state.partyActive) {
+          console.log('[URLSync] Broadcasting URL change to party');
+          this.stateManager.safeSendMessage({ 
+            type: 'URL_CHANGE', 
+            url: currentUrl 
+          });
+        }
+      }
+    }, 500);
+  }
+  
   stop() {
-    if (this.urlMonitorInterval) { clearInterval(this.urlMonitorInterval); this.urlMonitorInterval = null; }
+    console.log('[URLSync] Stopping URL monitoring');
+    if (this.urlMonitorInterval) { 
+      clearInterval(this.urlMonitorInterval); 
+      this.urlMonitorInterval = null; 
+    }
+    this.lastUrl = null;
   }
   saveState() {
     const state = this.stateManager.getState();

@@ -139,6 +139,7 @@ export class BackgroundService {
       }
       
       if (message.type === 'URL_CHANGE' && message.userId !== this.userId) {
+        console.log('[BackgroundService] Forwarding URL_CHANGE to content:', message.url, 'from', message.userId);
         chrome.tabs.query({ url: 'https://www.netflix.com/*' }, (tabs) => {
           tabs.forEach(tab => {
             chrome.tabs.sendMessage(tab.id, { type: 'APPLY_URL_CHANGE', url: message.url, fromUserId: message.userId }).catch(() => {});

@@ -26,19 +26,24 @@ export class SyncManager {
 
   async setup() {
     try {
+      console.log('[SyncManager] Starting setup - waiting for video element...');
       const video = await this.waitForVideo();
-      if (!video) { console.warn('[SyncManager] Netflix video element not found'); return; }
+      if (!video) { 
+        console.warn('[SyncManager] Netflix video element not found'); 
+        return; 
+      }
       
-      console.log('[SyncManager] Setting up event listeners');
+      console.log('[SyncManager] Video element found, setting up event listeners');
       this.isInitializedRef.set(false);
       
       // Request initial sync from other clients
+      console.log('[SyncManager] Requesting initial sync from other clients');
       this.state.safeSendMessage({ type: 'REQUEST_SYNC' });
       
       // If no response after 2 seconds, consider ourselves initialized
       setTimeout(() => {
         if (!this.isInitializedRef.get()) {
-          console.log('[SyncManager] No sync response received, marking as initialized');
+          console.log('[SyncManager] No sync response received after 2s, marking as initialized');
           this.isInitializedRef.set(true);
         }
       }, 2000);
@@ -53,19 +58,25 @@ export class SyncManager {
         onSeek: (vid) => this.broadcastSeek(vid)
       });
       this.listeners = listeners;
-    } catch (err) { console.error('[SyncManager] Error setting up playback sync:', err); }
+      console.log('[SyncManager] Setup complete - ready to sync');
+    } catch (err) { 
+      console.error('[SyncManager] Error setting up playback sync:', err); 
+    }
   }
 
   teardown() {
+    console.log('[SyncManager] Tearing down sync manager');
     if (this.listeners && this.listeners.video) {
       const { video, handlePlay, handlePause, handleSeeked } = this.listeners;
       try {
         video.removeEventListener('play', handlePlay);
         video.removeEventListener('pause', handlePause);
         video.removeEventListener('seeked', handleSeeked);
+        console.log('[SyncManager] Event listeners removed');
       } catch (e) { console.warn('[SyncManager] Error removing listeners:', e); }
       this.listeners = null;
     }
+    this.isInitializedRef.set(false);
   }
 
   waitForVideo() {

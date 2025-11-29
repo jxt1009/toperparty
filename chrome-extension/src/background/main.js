@@ -65,6 +65,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.type === 'URL_CHANGE') {
+    console.log('[Background] Broadcasting URL_CHANGE:', request.url);
     backgroundService.broadcastMessage({
       type: 'URL_CHANGE',
       url: request.url,

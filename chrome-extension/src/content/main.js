@@ -60,13 +60,22 @@ function stopVideoElementMonitoring() {
 (function checkRestorePartyState() {
   const restorationState = urlSync.getRestorationState();
   if (restorationState) {
+    console.log('[Content Script] Restoring party state for room:', restorationState.roomId);
     urlSync.clearState();
     stateManager.setRestoringFlag(true);
+    
     setTimeout(function() {
-      chrome.runtime.sendMessage({ type: 'RESTORE_PARTY', roomId: restorationState.roomId });
-      setTimeout(function() {
-        stateManager.setRestoringFlag(false);
-      }, 2000);
+      console.log('[Content Script] Sending RESTORE_PARTY message');
+      chrome.runtime.sendMessage({ type: 'RESTORE_PARTY', roomId: restorationState.roomId }, (response) => {
+        if (response && response.success) {
+          console.log('[Content Script] Party restoration successful - media stream and sync will be re-initialized');
+        } else {
+          console.error('[Content Script] Party restoration failed:', response ? response.error : 'Unknown error');
+        }
+        setTimeout(function() {
+          stateManager.setRestoringFlag(false);
+        }, 2000);
+      });
     }, 1000);
   }
 })();
@@ -97,7 +106,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.type === 'PARTY_STARTED') {
     console.log('[Content Script] Party started:', request.userId, request.roomId);
     stateManager.startParty(request.userId, request.roomId);
-    syncManager.setup();
+    
+    // Teardown existing sync manager if already set up
+    syncManager.teardown();
+    
+    // Setup sync manager (will wait for video element)
+    syncManager.setup().catch(err => {
+      console.error('[Content Script] Failed to setup sync manager:', err);
+    });
+    
     urlSync.start();
     startVideoElementMonitoring();
     sendResponse({ success: true });
@@ -136,8 +153,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.type === 'APPLY_URL_CHANGE') {
+    console.log('[Content Script] Received URL change request:', request.url, 'from', request.fromUserId);
     if (!stateManager.restoringPartyState) {
+      console.log('[Content Script] Navigating to:', request.url);
+      // Save state before navigating
+      urlSync.saveState();
       window.location.href = request.url;
+    } else {
+      console.log('[Content Script] Ignoring URL change - currently restoring party state');
     }
   }
 
