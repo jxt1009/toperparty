@@ -58,18 +58,28 @@ export function createRemoteHandlers({ state, netflix, lock, isInitializedRef })
       
       // Check if we need to navigate to a different URL
       const currentUrl = window.location.href;
-      const isOnBrowse = window.location.pathname.startsWith('/browse');
+      const currentPath = window.location.pathname;
+      const isOnWatch = currentPath.startsWith('/watch');
+      const isOnBrowse = currentPath.startsWith('/browse');
       const otherIsOnWatch = url && (new URL(url).pathname.startsWith('/watch'));
       
-      // If we're on browse and they're on /watch, always navigate to their page
-      if (isOnBrowse && otherIsOnWatch) {
-        console.log('[SyncManager] On browse page, other user on /watch - navigating to their show');
+      // Only navigate if we're NOT on a /watch page and the other user IS on /watch
+      // This allows initial sync to pull you to the watch page, but won't pull you back if you leave
+      if (!isOnWatch && otherIsOnWatch && isOnBrowse) {
+        console.log('[SyncManager] On browse page during initial join, other user on /watch - navigating to their show');
         sessionStorage.setItem('toperparty_pending_sync', JSON.stringify({
           currentTime,
           isPlaying,
           timestamp: Date.now()
         }));
         window.location.href = url;
+        return;
+      }
+      
+      // If we're not on /watch at all, ignore this sync response
+      if (!isOnWatch) {
+        console.log('[SyncManager] Not on /watch page - ignoring sync response');
+        isInitializedRef.set(true); // Mark as initialized so we don't keep processing these
         return;
       }
       
