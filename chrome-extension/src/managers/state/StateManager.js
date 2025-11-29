@@ -28,7 +28,15 @@ export class StateManager {
   }
   safeSendMessage(message, callback) {
     if (!this.isExtensionContextValid()) {
-      console.warn('[StateManager] Extension context invalid, cannot send message');
+      console.warn('[StateManager] Extension context invalid - page needs reload after extension update');
+      // Show user notification that they need to reload
+      if (!document.getElementById('toperparty-reload-notice')) {
+        const notice = document.createElement('div');
+        notice.id = 'toperparty-reload-notice';
+        notice.style.cssText = 'position:fixed;top:20px;right:20px;background:#e50914;color:white;padding:15px;border-radius:8px;z-index:99999;font-family:Arial;box-shadow:0 4px 6px rgba(0,0,0,0.3);';
+        notice.innerHTML = '<strong>ToperParty:</strong> Extension updated. Please reload this page.';
+        document.body.appendChild(notice);
+      }
       return;
     }
     console.log('[StateManager] Sending message:', message.type, message);

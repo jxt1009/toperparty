@@ -23,10 +23,11 @@ export class URLSync {
         const lastPath = this.lastUrl ? new URL(this.lastUrl).pathname : '';
         const currentPath = new URL(currentUrl).pathname;
         
-        // Check if we navigated to a different /watch page
+        // Check if we navigated to a different /watch page or left /watch
         const wasOnWatch = lastPath.startsWith('/watch');
         const nowOnWatch = currentPath.startsWith('/watch');
         const watchPageChanged = wasOnWatch && nowOnWatch && lastPath !== currentPath;
+        const leftWatch = wasOnWatch && !nowOnWatch;
         
         this.lastUrl = currentUrl;
         
@@ -36,16 +37,27 @@ export class URLSync {
           this.onWatchPageChange();
         }
         
+        const state = this.stateManager.getState();
+        
+        // If someone leaves /watch, pause the video for everyone
+        if (state.partyActive && leftWatch) {
+          console.log('[URLSync] Left /watch page - sending pause to all clients');
+          this.stateManager.safeSendMessage({ 
+            type: 'PLAY_PAUSE', 
+            control: 'pause',
+            timestamp: 0
+          });
+        }
+        
         // Only broadcast URL changes if navigating to a /watch page
         // This allows users to browse without forcing others to follow
-        const state = this.stateManager.getState();
         if (state.partyActive && nowOnWatch && (watchPageChanged || (!wasOnWatch && nowOnWatch))) {
           console.log('[URLSync] Broadcasting /watch URL change to party');
           this.stateManager.safeSendMessage({ 
             type: 'URL_CHANGE', 
             url: currentUrl 
           });
-        } else if (!nowOnWatch) {
+        } else if (!nowOnWatch && !leftWatch) {
           console.log('[URLSync] Not broadcasting - not on /watch page (on:', currentPath + ')');
         }
       }
