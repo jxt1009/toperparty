@@ -1,4 +1,4 @@
-export function createPeerConnectionFactory({ stateManager, sendSignal, remoteStreams, remoteVideos, addRemoteVideo, attemptReconnection, clearReconnection, removeRemoteVideo, peersThatLeft }) {
+export function createPeerConnectionFactory({ stateManager, sendSignal, remoteStreams, remoteVideos, addRemoteVideo, attemptReconnection, clearReconnection, removeRemoteVideo, peersThatLeft, showReconnecting, hideOverlay }) {
   return function createPeerConnection(peerId) {
     const state = stateManager.getState();
     const pc = new RTCPeerConnection({
@@ -74,6 +74,7 @@ export function createPeerConnectionFactory({ stateManager, sendSignal, remoteSt
       console.log('[PeerConnection] Connection state changed for peer:', peerId, '→', pc.connectionState);
       if (pc.connectionState === 'connected') {
         clearReconnection(peerId);
+        hideOverlay(peerId);
       } else if (pc.connectionState === 'disconnected') {
         if (peersThatLeft.has(peerId)) {
           removeRemoteVideo(peerId);
@@ -81,6 +82,7 @@ export function createPeerConnectionFactory({ stateManager, sendSignal, remoteSt
         } else {
           // Keep video visible while reconnecting - don't remove immediately
           console.log('[PeerConnection] Connection disconnected, attempting reconnection while keeping video visible');
+          showReconnecting(peerId);
           attemptReconnection(peerId);
         }
       } else if (pc.connectionState === 'failed') {
