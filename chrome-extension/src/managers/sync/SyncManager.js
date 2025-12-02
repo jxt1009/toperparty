@@ -145,20 +145,43 @@ export class SyncManager {
           }, 5000);
         }
       } else {
-        // Request initial sync from other clients
-        console.log('[SyncManager] Requesting initial sync from other clients');
-        this.state.safeSendMessage({ type: 'REQUEST_SYNC' });
+        // Wait for video to be ready before requesting sync
+        const requestSyncWhenReady = () => {
+          console.log('[SyncManager] Video ready - requesting initial sync from other clients');
+          this.state.safeSendMessage({ type: 'REQUEST_SYNC' });
+          
+          // If no response after 2 seconds, consider ourselves initialized
+          setTimeout(() => {
+            if (!this.isInitializedRef.get()) {
+              console.log('[SyncManager] No sync response received after 2s, marking as initialized');
+              this.isInitializedRef.set(true);
+              console.log('[SyncManager] isInitialized is now:', this.isInitializedRef.get());
+            } else {
+              console.log('[SyncManager] Already initialized, skipping timeout initialization');
+            }
+          }, 2000);
+        };
         
-        // If no response after 2 seconds, consider ourselves initialized
-        setTimeout(() => {
-          if (!this.isInitializedRef.get()) {
-            console.log('[SyncManager] No sync response received after 2s, marking as initialized');
-            this.isInitializedRef.set(true);
-            console.log('[SyncManager] isInitialized is now:', this.isInitializedRef.get());
-          } else {
-            console.log('[SyncManager] Already initialized, skipping timeout initialization');
-          }
-        }, 2000);
+        const onVideoReady = () => {
+          console.log('[SyncManager] Video canplay event fired');
+          video.removeEventListener('canplay', onVideoReady);
+          requestSyncWhenReady();
+        };
+        
+        // If video is already ready, request sync immediately
+        if (video.readyState >= 3) { // HAVE_FUTURE_DATA or better
+          console.log('[SyncManager] Video already ready (readyState:', video.readyState + ')');
+          requestSyncWhenReady();
+        } else {
+          console.log('[SyncManager] Waiting for video to be ready before requesting sync (readyState:', video.readyState + ')');
+          video.addEventListener('canplay', onVideoReady);
+          // Fallback timeout
+          setTimeout(() => {
+            video.removeEventListener('canplay', onVideoReady);
+            console.log('[SyncManager] Timeout reached, requesting sync anyway');
+            requestSyncWhenReady();
+          }, 5000);
+        }
       }
       
       const listeners = attachPlaybackListeners({
