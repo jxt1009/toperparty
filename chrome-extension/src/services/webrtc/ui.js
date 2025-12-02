@@ -68,6 +68,7 @@ export function createRemoteVideoManager(remoteVideos) {
 
   function add(peerId, stream) {
     console.log('[RemoteVideoManager] Adding remote video for peer:', peerId, 'stream:', stream, 'tracks:', stream.getTracks());
+    console.log('[RemoteVideoManager] Current remoteVideos map size:', remoteVideos.size, 'peers:', Array.from(remoteVideos.keys()));
     
     // Check if video already exists in DOM (double-check for race conditions)
     const existingInDom = document.getElementById('toperparty-remote-' + peerId);
@@ -353,9 +354,11 @@ export function createRemoteVideoManager(remoteVideos) {
     // Check if container already exists
     let container = document.getElementById('toperparty-container-' + peerId);
     if (container) {
-      console.log('[RemoteVideoManager] Placeholder already exists for peer:', peerId);
+      console.log('[RemoteVideoManager] Placeholder already exists for peer:', peerId, '- reusing it');
       return;
     }
+    
+    console.log('[RemoteVideoManager] Creating NEW placeholder container for peer:', peerId);
     
     // Create container immediately
     container = document.createElement('div');

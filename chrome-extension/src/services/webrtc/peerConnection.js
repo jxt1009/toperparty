@@ -1,8 +1,11 @@
 export function createPeerConnectionFactory({ stateManager, sendSignal, remoteStreams, remoteVideos, addRemoteVideo, attemptReconnection, clearReconnection, removeRemoteVideo, peersThatLeft, showReconnecting, hideOverlay, showPlaceholder }) {
   return function createPeerConnection(peerId) {
-    // Ensure any existing video/container is removed before creating placeholder
+    console.log('[PeerConnection] Creating peer connection for peerId:', peerId);
+    
+    // Ensure any existing video/container AND stream is removed before creating placeholder
     // This prevents duplicates when rapidly recreating connections (like force refresh)
     removeRemoteVideo(peerId);
+    remoteStreams.delete(peerId); // Also clear the stream
     
     // Show placeholder immediately when peer connection is created
     showPlaceholder(peerId);
