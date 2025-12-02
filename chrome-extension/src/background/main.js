@@ -39,7 +39,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       type: 'PLAY_PAUSE',
       control: request.control,
       currentTime: request.currentTime,
-      userId: backgroundService.userId
+      userId: backgroundService.userId,
+      roomId: backgroundService.roomId
     });
     sendResponse({ success: true });
   }
@@ -49,7 +50,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       type: 'SYNC_PLAYBACK',
       currentTime: request.currentTime,
       isPlaying: request.isPlaying,
-      userId: backgroundService.userId
+      userId: backgroundService.userId,
+      roomId: backgroundService.roomId
     });
     sendResponse({ success: true });
   }
@@ -59,7 +61,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       type: 'SEEK',
       currentTime: request.currentTime,
       isPlaying: request.isPlaying,
-      userId: backgroundService.userId
+      userId: backgroundService.userId,
+      roomId: backgroundService.roomId
     });
     sendResponse({ success: true });
   }
@@ -69,7 +72,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     backgroundService.broadcastMessage({
       type: 'URL_CHANGE',
       url: request.url,
-      userId: backgroundService.userId
+      userId: backgroundService.userId,
+      roomId: backgroundService.roomId
     });
     sendResponse({ success: true });
   }
@@ -77,7 +81,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.type === 'REQUEST_SYNC') {
     backgroundService.broadcastMessage({
       type: 'REQUEST_SYNC',
-      userId: backgroundService.userId
+      userId: backgroundService.userId,
+      roomId: backgroundService.roomId
     });
     sendResponse({ success: true });
   }
@@ -91,7 +96,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         currentTime: request.currentTime,
         isPlaying: request.isPlaying,
         url: request.url,
-        fromUserId: backgroundService.userId
+        fromUserId: backgroundService.userId,
+        roomId: backgroundService.roomId
       }));
     }
     sendResponse({ success: true });

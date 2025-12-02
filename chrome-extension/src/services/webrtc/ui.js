@@ -52,7 +52,26 @@ export function createRemoteVideoManager(remoteVideos) {
 
   function add(peerId, stream) {
     console.log('[RemoteVideoManager] Adding remote video for peer:', peerId, 'stream:', stream, 'tracks:', stream.getTracks());
+    
+    // Check if video already exists in DOM (double-check for race conditions)
+    const existingInDom = document.getElementById('toperparty-remote-' + peerId);
+    if (existingInDom) {
+      console.log('[RemoteVideoManager] Video already exists in DOM for peer:', peerId, 'skipping duplicate creation');
+      // Update stream on existing element if different
+      if (existingInDom.srcObject !== stream) {
+        console.log('[RemoteVideoManager] Updating stream on existing video element');
+        existingInDom.srcObject = stream;
+      }
+      // Make sure it's tracked
+      if (!remoteVideos.has(peerId)) {
+        remoteVideos.set(peerId, existingInDom);
+      }
+      return;
+    }
+    
+    // Remove any stale references
     remove(peerId);
+    
     const v = document.createElement('video');
     v.id = 'toperparty-remote-' + peerId;
     v.autoplay = true;
@@ -97,11 +116,32 @@ export function createRemoteVideoManager(remoteVideos) {
   
   function remove(peerId) {
     console.log('[RemoteVideoManager] Removing remote video for peer:', peerId);
+    
+    // Remove from map
     const v = remoteVideos.get(peerId);
     if (v) {
-      try { if (v.srcObject) v.srcObject = null; } catch (e) {}
+      try { 
+        if (v.srcObject) {
+          v.srcObject.getTracks().forEach(track => track.stop());
+          v.srcObject = null;
+        }
+      } catch (e) {
+        console.warn('[RemoteVideoManager] Error cleaning up stream:', e);
+      }
       v.remove();
       remoteVideos.delete(peerId);
+    }
+    
+    // Also check DOM for any orphaned elements (extra safety)
+    const domElement = document.getElementById('toperparty-remote-' + peerId);
+    if (domElement && domElement !== v) {
+      console.log('[RemoteVideoManager] Found orphaned DOM element, removing');
+      try {
+        if (domElement.srcObject) {
+          domElement.srcObject = null;
+        }
+      } catch (e) {}
+      domElement.remove();
     }
   }
   

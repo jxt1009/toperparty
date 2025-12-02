@@ -23,13 +23,28 @@ export function createPeerConnectionFactory({ stateManager, sendSignal, remoteSt
       }
       if (event.track) {
         console.log('[PeerConnection] Adding track to stream:', event.track.kind, event.track.id);
-        try { stream.addTrack(event.track); } catch (e) {
+        try { 
+          // Check if track already exists in stream to prevent duplicates
+          const existingTrack = stream.getTracks().find(t => t.id === event.track.id);
+          if (!existingTrack) {
+            stream.addTrack(event.track);
+          } else {
+            console.log('[PeerConnection] Track already in stream, skipping');
+          }
+        } catch (e) {
           console.warn('[PeerConnection] Error adding track:', e);
         }
       }
-      if (!remoteVideos.has(peerId)) {
+      
+      // Only add video element if we don't have one yet (check both Map and DOM)
+      const hasVideoInMap = remoteVideos.has(peerId);
+      const hasVideoInDom = !!document.getElementById('toperparty-remote-' + peerId);
+      
+      if (!hasVideoInMap && !hasVideoInDom) {
         console.log('[PeerConnection] Adding remote video for peer:', peerId, 'stream tracks:', stream.getTracks().length);
         addRemoteVideo(peerId, stream);
+      } else {
+        console.log('[PeerConnection] Remote video already exists for peer:', peerId, 'inMap:', hasVideoInMap, 'inDom:', hasVideoInDom);
       }
     };
     pc.onconnectionstatechange = () => {
