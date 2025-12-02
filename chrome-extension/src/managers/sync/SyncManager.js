@@ -88,6 +88,9 @@ export class SyncManager {
         if (!this.isInitializedRef.get()) {
           console.log('[SyncManager] No sync response received after 2s, marking as initialized');
           this.isInitializedRef.set(true);
+          console.log('[SyncManager] isInitialized is now:', this.isInitializedRef.get());
+        } else {
+          console.log('[SyncManager] Already initialized, skipping timeout initialization');
         }
       }, 2000);
       
