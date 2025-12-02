@@ -18,12 +18,20 @@ export class URLSync {
       
       // Check if we navigated to a different /watch page or left /watch
       const wasOnWatch = lastPath.startsWith('/watch');
+      const wasOnBrowse = lastPath.startsWith('/browse');
       const nowOnWatch = currentPath.startsWith('/watch');
       const watchPageChanged = wasOnWatch && nowOnWatch && lastPath !== currentPath;
       const navigatedToWatch = !wasOnWatch && nowOnWatch;
+      const navigatedFromBrowseToWatch = wasOnBrowse && nowOnWatch;
       const leftWatch = wasOnWatch && !nowOnWatch;
       
       this.lastUrl = currentUrl;
+      
+      // If we navigated from browse to watch, set flag to respect Netflix auto-play
+      if (navigatedFromBrowseToWatch) {
+        console.log('[URLSync] Navigated from browse to /watch - setting auto-play flag');
+        sessionStorage.setItem('toperparty_from_browse', 'true');
+      }
       
       // If we changed to a different /watch page, reinitialize sync
       if (watchPageChanged) {

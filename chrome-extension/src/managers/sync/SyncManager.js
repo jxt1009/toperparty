@@ -85,20 +85,29 @@ export class SyncManager {
       
       this.isInitializedRef.set(false);
       
-      // Request initial sync from other clients
-      console.log('[SyncManager] Requesting initial sync from other clients');
-      this.state.safeSendMessage({ type: 'REQUEST_SYNC' });
-      
-      // If no response after 2 seconds, consider ourselves initialized
-      setTimeout(() => {
-        if (!this.isInitializedRef.get()) {
-          console.log('[SyncManager] No sync response received after 2s, marking as initialized');
-          this.isInitializedRef.set(true);
-          console.log('[SyncManager] isInitialized is now:', this.isInitializedRef.get());
-        } else {
-          console.log('[SyncManager] Already initialized, skipping timeout initialization');
-        }
-      }, 2000);
+      // Check if we just navigated from browse - if so, respect Netflix's auto-play intent
+      const fromBrowse = sessionStorage.getItem('toperparty_from_browse');
+      if (fromBrowse === 'true') {
+        console.log('[SyncManager] Just navigated from browse - respecting auto-play, not requesting sync');
+        sessionStorage.removeItem('toperparty_from_browse');
+        // Mark as initialized immediately so we don't pause on sync responses
+        this.isInitializedRef.set(true);
+      } else {
+        // Request initial sync from other clients
+        console.log('[SyncManager] Requesting initial sync from other clients');
+        this.state.safeSendMessage({ type: 'REQUEST_SYNC' });
+        
+        // If no response after 2 seconds, consider ourselves initialized
+        setTimeout(() => {
+          if (!this.isInitializedRef.get()) {
+            console.log('[SyncManager] No sync response received after 2s, marking as initialized');
+            this.isInitializedRef.set(true);
+            console.log('[SyncManager] isInitialized is now:', this.isInitializedRef.get());
+          } else {
+            console.log('[SyncManager] Already initialized, skipping timeout initialization');
+          }
+        }, 2000);
+      }
       
       const listeners = attachPlaybackListeners({
         video,
