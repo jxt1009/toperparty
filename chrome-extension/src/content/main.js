@@ -76,7 +76,13 @@ const handleNavigationToWatch = () => {
   }
 };
 
-const urlSync = new URLSync(stateManager, handleWatchPageChange, handleNavigationToWatch);
+// Teardown sync manager when leaving a watch page
+const handleLeaveWatch = () => {
+  console.log('[Content Script] Left /watch page');
+  syncManager.teardown();
+};
+
+const urlSync = new URLSync(stateManager, handleWatchPageChange, handleNavigationToWatch, handleLeaveWatch);
 console.log('[Content Script] Managers initialized');
 
 let localStream = null;

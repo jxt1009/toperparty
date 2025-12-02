@@ -1,10 +1,11 @@
 export class URLSync {
-  constructor(stateManager, onWatchPageChange, onNavigateToWatch) {
+  constructor(stateManager, onWatchPageChange, onNavigateToWatch, onLeaveWatch) {
     this.stateManager = stateManager;
     this.urlMonitorInterval = null;
     this.lastUrl = null;
     this.onWatchPageChange = onWatchPageChange || (() => {});
     this.onNavigateToWatch = onNavigateToWatch || (() => {});
+    this.onLeaveWatch = onLeaveWatch || (() => {});
     this.handleUrlChange = this.handleUrlChange.bind(this);
   }
   
@@ -34,6 +35,12 @@ export class URLSync {
       if (navigatedToWatch) {
         console.log('[URLSync] Navigated to /watch page - triggering sync initialization');
         this.onNavigateToWatch();
+      }
+      
+      // If we left a /watch page, teardown sync
+      if (leftWatch) {
+        console.log('[URLSync] Left /watch page - triggering sync teardown');
+        this.onLeaveWatch();
       }
       
       const state = this.stateManager.getState();

@@ -26,6 +26,12 @@ export class SyncManager {
 
   async setup() {
     try {
+      // Only setup sync manager on /watch pages
+      if (!window.location.pathname.startsWith('/watch')) {
+        console.log('[SyncManager] Not on /watch page, skipping setup');
+        return;
+      }
+      
       console.log('[SyncManager] Starting setup - waiting for video element...');
       const video = await this.waitForVideo();
       if (!video) { 
