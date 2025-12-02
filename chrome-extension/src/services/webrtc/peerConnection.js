@@ -36,15 +36,38 @@ export function createPeerConnectionFactory({ stateManager, sendSignal, remoteSt
         }
       }
       
-      // Only add video element if we don't have one yet (check both Map and DOM)
+      // Check if video element exists
       const hasVideoInMap = remoteVideos.has(peerId);
       const hasVideoInDom = !!document.getElementById('toperparty-remote-' + peerId);
+      const videoExists = hasVideoInMap || hasVideoInDom;
       
-      if (!hasVideoInMap && !hasVideoInDom) {
-        console.log('[PeerConnection] Adding remote video for peer:', peerId, 'stream tracks:', stream.getTracks().length);
-        addRemoteVideo(peerId, stream);
+      if (videoExists) {
+        console.log('[PeerConnection] Video already exists for peer:', peerId, 'inMap:', hasVideoInMap, 'inDom:', hasVideoInDom);
+        // Update the existing video element's stream if it's different
+        const existingVideo = remoteVideos.get(peerId) || document.getElementById('toperparty-remote-' + peerId);
+        if (existingVideo && existingVideo.srcObject !== stream) {
+          console.log('[PeerConnection] Updating existing video element with new stream');
+          existingVideo.srcObject = stream;
+          // Ensure it's tracked in the map
+          if (!hasVideoInMap) {
+            remoteVideos.set(peerId, existingVideo);
+          }
+        }
       } else {
-        console.log('[PeerConnection] Remote video already exists for peer:', peerId, 'inMap:', hasVideoInMap, 'inDom:', hasVideoInDom);
+        // Wait for both audio and video tracks before creating video element
+        const tracks = stream.getTracks();
+        const hasAudio = tracks.some(t => t.kind === 'audio');
+        const hasVideo = tracks.some(t => t.kind === 'video');
+        
+        console.log('[PeerConnection] Stream status - audio:', hasAudio, 'video:', hasVideo, 'total tracks:', tracks.length);
+        
+        // Only create video element when we have both tracks
+        if (hasAudio && hasVideo) {
+          console.log('[PeerConnection] Both tracks present, adding remote video for peer:', peerId);
+          addRemoteVideo(peerId, stream);
+        } else {
+          console.log('[PeerConnection] Waiting for more tracks before creating video element');
+        }
       }
     };
     pc.onconnectionstatechange = () => {

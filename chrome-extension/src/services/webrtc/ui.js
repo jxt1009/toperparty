@@ -86,13 +86,19 @@ export function createRemoteVideoManager(remoteVideos) {
     v.style.border = '2px solid #00aaff';
     v.style.borderRadius = '4px';
     console.log('[RemoteVideoManager] Created video element:', v.id, 'at position:', v.style.right);
+    
+    // Verify stream has active tracks
+    const activeTracks = stream.getTracks().filter(t => t.readyState === 'live');
+    console.log('[RemoteVideoManager] Stream has', activeTracks.length, 'active tracks:', 
+      activeTracks.map(t => `${t.kind}:${t.id.substring(0,8)}`).join(', '));
+    
     try { 
       v.srcObject = stream;
       console.log('[RemoteVideoManager] Set srcObject successfully');
     } catch (e) { 
-      console.warn('[RemoteVideoManager] srcObject failed, trying createObjectURL:', e);
-      v.src = URL.createObjectURL(stream); 
+      console.warn('[RemoteVideoManager] srcObject failed:', e);
     }
+    
     document.body.appendChild(v);
     console.log('[RemoteVideoManager] Appended video to body');
     remoteVideos.set(peerId, v);
@@ -100,17 +106,35 @@ export function createRemoteVideoManager(remoteVideos) {
     // Make it draggable
     makeDraggable(v);
     
-    try {
+    // Handle video playback with better error handling
+    const playVideo = () => {
       v.play().then(() => {
         console.log('[RemoteVideoManager] Video playing, unmuting');
         v.muted = false;
         v.volume = 1.0;
       }).catch((e) => { 
-        console.warn('[RemoteVideoManager] Play failed:', e);
+        console.warn('[RemoteVideoManager] Play failed:', e.name, e.message);
+        // Try unmuting anyway in case autoplay blocked
         v.muted = false; 
       });
-    } catch (e) {
-      console.warn('[RemoteVideoManager] Error calling play:', e);
+    };
+    
+    // If stream already has tracks, play immediately
+    if (activeTracks.length > 0) {
+      playVideo();
+    } else {
+      // Wait for tracks to become active
+      console.log('[RemoteVideoManager] Waiting for stream tracks to become active');
+      const checkTracks = setInterval(() => {
+        const nowActive = stream.getTracks().filter(t => t.readyState === 'live');
+        if (nowActive.length > 0) {
+          clearInterval(checkTracks);
+          console.log('[RemoteVideoManager] Tracks now active, playing video');
+          playVideo();
+        }
+      }, 100);
+      // Give up after 5 seconds
+      setTimeout(() => clearInterval(checkTracks), 5000);
     }
   }
   
