@@ -47,6 +47,16 @@ export class URLSync {
         
         const state = this.stateManager.getState();
         
+        // Broadcast all Netflix URL changes to the party
+        // This keeps everyone synchronized on browse, title pages, etc.
+        if (state.partyActive) {
+          console.log('[URLSync] Broadcasting URL change to party:', currentPath);
+          this.stateManager.safeSendMessage({ 
+            type: 'URL_CHANGE', 
+            url: currentUrl 
+          });
+        }
+        
         // If someone leaves /watch, pause the video for everyone
         if (state.partyActive && leftWatch) {
           console.log('[URLSync] Left /watch page - sending pause to all clients');
@@ -55,18 +65,6 @@ export class URLSync {
             control: 'pause',
             timestamp: 0
           });
-        }
-        
-        // Only broadcast URL changes if navigating to a /watch page
-        // This allows users to browse without forcing others to follow
-        if (state.partyActive && nowOnWatch && (watchPageChanged || (!wasOnWatch && nowOnWatch))) {
-          console.log('[URLSync] Broadcasting /watch URL change to party');
-          this.stateManager.safeSendMessage({ 
-            type: 'URL_CHANGE', 
-            url: currentUrl 
-          });
-        } else if (!nowOnWatch && !leftWatch) {
-          console.log('[URLSync] Not broadcasting - not on /watch page (on:', currentPath + ')');
         }
       }
     }, 500);
