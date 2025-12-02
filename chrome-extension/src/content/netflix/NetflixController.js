@@ -27,31 +27,21 @@ export class NetflixController {
   setVolume(level) { return this._sendCommand('setVolume', [level]); }
   getVolume() { return this._sendCommand('getVolume'); }
   getVideoElement() { 
-    // Find Netflix main player video element, excluding ToperParty videos and preview videos
-    const videos = document.querySelectorAll('video');
-    let mainVideo = null;
-    let maxArea = 0;
+    // Find Netflix main player video element
+    // On /watch pages, look for video in the watch-video container
+    // On other pages, don't return any video (we don't want to sync preview videos)
     
-    for (const video of videos) {
-      // Skip ToperParty videos
-      if (video.id && video.id.startsWith('toperparty-')) {
-        continue;
-      }
-      
-      // Skip hidden or very small videos (likely previews)
-      const rect = video.getBoundingClientRect();
-      if (rect.width < 400 || rect.height < 300) {
-        continue;
-      }
-      
-      // Find the largest video (main player is typically fullscreen or large)
-      const area = rect.width * rect.height;
-      if (area > maxArea) {
-        maxArea = area;
-        mainVideo = video;
-      }
+    if (!window.location.pathname.startsWith('/watch')) {
+      return null;
     }
     
-    return mainVideo;
+    // Find Netflix video element, excluding ToperParty videos
+    const videos = document.querySelectorAll('video');
+    for (const video of videos) {
+      if (!video.id || !video.id.startsWith('toperparty-')) {
+        return video;
+      }
+    }
+    return null;
   }
 }
