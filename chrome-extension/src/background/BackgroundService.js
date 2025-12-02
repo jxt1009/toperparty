@@ -20,6 +20,7 @@ export class BackgroundService {
 
   async startParty(inputRoomId) {
     this.roomId = inputRoomId || 'default_room_' + Date.now();
+    this.intentionalDisconnect = false; // Reset flag so reconnection works
     return new Promise((resolve, reject) => {
       try {
         chrome.tabs.query({ url: 'https://www.netflix.com/*' }, (tabs) => {
@@ -116,12 +117,16 @@ export class BackgroundService {
     this.cleanup();
     this.isConnected = false;
     this.reconnectAttempts = 0;
-    this.roomId = null;
-    chrome.tabs.query({ url: 'https://www.netflix.com/*' }, (tabs) => {
-      tabs.forEach(tab => {
-        chrome.tabs.sendMessage(tab.id, { type: 'PARTY_STOPPED' }).catch(() => {});
+    
+    // Only fully tear down if this is a real stop (not a reconnection)
+    if (sendLeaveSignal) {
+      this.roomId = null;
+      chrome.tabs.query({ url: 'https://www.netflix.com/*' }, (tabs) => {
+        tabs.forEach(tab => {
+          chrome.tabs.sendMessage(tab.id, { type: 'PARTY_STOPPED' }).catch(() => {});
+        });
       });
-    });
+    }
   }
 
   cleanup() {
