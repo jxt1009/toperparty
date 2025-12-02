@@ -14,7 +14,7 @@ export function createSignalingHandlers({ getState, peerConnections, peersThatLe
         const connectionState = pc.connectionState;
         console.log('[Signaling] Already have peer connection for', from, 'state:', connectionState);
         
-        // If connection is still good, just ensure tracks are added and renegotiate
+        // If connection is still good (connected/connecting), reuse it
         if (connectionState === 'connected' || connectionState === 'connecting') {
           console.log('[Signaling] Reusing existing connection - ensuring tracks are present');
           const stream = getLocalStream();
@@ -41,13 +41,15 @@ export function createSignalingHandlers({ getState, peerConnections, peersThatLe
           return;
         }
         
-        // If connection is failed/closed, clean it up
-        if (connectionState === 'failed' || connectionState === 'closed') {
-          console.log('[Signaling] Cleaning up failed/closed connection');
-          try { pc.close(); } catch (e) {}
-          peerConnections.delete(from);
-          pc = null;
-        }
+        // For any other state (disconnected/failed/closed), clean it up and create new connection
+        // This handles the case where a peer refreshes - their old connection is stuck in 
+        // disconnected/failed state, so we need to clean it up when they rejoin
+        console.log('[Signaling] Cleaning up existing connection in state:', connectionState);
+        clearReconnection(from);
+        removeRemoteVideo(from);
+        try { pc.close(); } catch (e) {}
+        peerConnections.delete(from);
+        pc = null;
       }
       
       if (!pc) {
