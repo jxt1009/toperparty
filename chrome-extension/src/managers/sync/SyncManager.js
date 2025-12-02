@@ -86,14 +86,64 @@ export class SyncManager {
       this.isInitializedRef.set(false);
       
       // Check if we just navigated from browse - if so, respect Netflix's natural behavior
-      // (auto-play, resume from saved position, etc.) and skip initial sync
+      // and become the leader that others sync to
       const fromBrowse = sessionStorage.getItem('toperparty_from_browse');
       if (fromBrowse === 'true') {
-        console.log('[SyncManager] Just navigated from browse - respecting Netflix behavior, skipping initial sync');
+        console.log('[SyncManager] Just navigated from browse - becoming leader, will broadcast state once video is ready');
         sessionStorage.removeItem('toperparty_from_browse');
         // Mark as initialized immediately so we start broadcasting our state
         this.isInitializedRef.set(true);
-        console.log('[SyncManager] Marked as initialized, will now broadcast playback events');
+        
+        // Wait for video to be ready before broadcasting state
+        const broadcastLeaderState = async () => {
+          try {
+            const currentTime = await this.netflix.getCurrentTime();
+            const isPaused = await this.netflix.isPaused();
+            if (currentTime != null) {
+              const currentTimeSeconds = currentTime / 1000;
+              console.log('[SyncManager] Video ready - broadcasting initial state as leader:', currentTimeSeconds.toFixed(2) + 's', isPaused ? 'paused' : 'playing');
+              
+              // Broadcast our current state
+              if (isPaused) {
+                this.state.safeSendMessage({ 
+                  type: 'PLAY_PAUSE', 
+                  control: 'pause', 
+                  currentTime: currentTimeSeconds 
+                });
+              } else {
+                this.state.safeSendMessage({ 
+                  type: 'PLAY_PAUSE', 
+                  control: 'play', 
+                  currentTime: currentTimeSeconds 
+                });
+              }
+            }
+          } catch (e) {
+            console.error('[SyncManager] Error broadcasting leader state:', e);
+          }
+        };
+        
+        // Listen for video ready event (canplay fires when video has buffered enough to play)
+        const onVideoReady = () => {
+          console.log('[SyncManager] Video canplay event fired');
+          video.removeEventListener('canplay', onVideoReady);
+          broadcastLeaderState();
+        };
+        
+        // If video is already ready, broadcast immediately
+        if (video.readyState >= 3) { // HAVE_FUTURE_DATA or better
+          console.log('[SyncManager] Video already ready (readyState:', video.readyState + ')');
+          broadcastLeaderState();
+        } else {
+          console.log('[SyncManager] Waiting for video to be ready (readyState:', video.readyState + ')');
+          video.addEventListener('canplay', onVideoReady);
+          // Fallback timeout in case canplay never fires
+          setTimeout(() => {
+            video.removeEventListener('canplay', onVideoReady);
+            console.log('[SyncManager] Timeout reached, broadcasting anyway');
+            broadcastLeaderState();
+          }, 5000);
+        }
       } else {
         // Request initial sync from other clients
         console.log('[SyncManager] Requesting initial sync from other clients');
