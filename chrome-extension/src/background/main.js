@@ -18,8 +18,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.type === 'RESTORE_PARTY') {
+    // Don't generate a new userId - keep the existing one so peers can still communicate
+    // Only reconnect to the server with the same userId
     backgroundService.stopParty(false);
-    backgroundService.userId = backgroundService.generateUserId();
     backgroundService.startParty(request.roomId).then(() => {
       sendResponse({ success: true });
     }).catch(err => {
