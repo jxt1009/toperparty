@@ -10,7 +10,6 @@ export class WebRTCManager {
     this.peerConnections = new Map();
     this.remoteStreams = this.uiManager.getRemoteStreams();
     this.remoteVideos = this.uiManager.getRemoteVideos();
-    this.remoteVideoTimes = new Map(); // Track remote user video times
     this.peersThatLeft = new Set();
     this.localStream = null;
 

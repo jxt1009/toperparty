@@ -277,12 +277,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       return;
     }
     console.log('[Content Script] Applying playback control:', request.control, 'at', request.currentTime, 'from', request.fromUserId);
-    
-    // Track remote user time
-    if (request.fromUserId && request.currentTime != null) {
-      webrtcManager.remoteVideoTimes.set(request.fromUserId, request.currentTime * 1000);
-    }
-    
     syncManager.handlePlaybackControl(request.control, request.currentTime, request.fromUserId);
   }
 
@@ -294,12 +288,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       console.log('[Content Script] Ignoring seek - not on /watch page');
       return;
     }
-    
-    // Track remote user time
-    if (request.fromUserId && request.currentTime != null) {
-      webrtcManager.remoteVideoTimes.set(request.fromUserId, request.currentTime * 1000);
-    }
-    
     syncManager.handleSeek(request.currentTime, request.isPlaying, request.fromUserId);
   }
 
@@ -358,12 +346,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       return;
     }
     console.log('[Content Script] Applying sync response from', request.fromUserId, 'URL:', request.url, request.respectAutoPlay ? '(respecting auto-play)' : '');
-    
-    // Track remote user time
-    if (request.fromUserId && request.currentTime != null) {
-      webrtcManager.remoteVideoTimes.set(request.fromUserId, request.currentTime * 1000);
-    }
-    
     syncManager.handleSyncResponse(request.currentTime, request.isPlaying, request.fromUserId, request.url, request.respectAutoPlay);
   }
 
@@ -384,33 +366,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       console.log('[Content Script] Requesting sync after reconnection');
       stateManager.safeSendMessage({ type: 'REQUEST_SYNC' });
     }
-  }
-
-  if (request.type === 'GET_PARTY_STATS') {
-    // Return stats for popup display
-    const formatTime = (ms) => {
-      if (!ms) return '--:--';
-      const totalSeconds = Math.floor(ms / 1000);
-      const minutes = Math.floor(totalSeconds / 60);
-      const seconds = totalSeconds % 60;
-      return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-    };
-
-    netflixController.getCurrentTime().then(currentTime => {
-      const state = stateManager.getState();
-      const remoteUsers = Array.from(webrtcManager.remoteVideoTimes || new Map()).map(([userId, time]) => ({
-        id: userId,
-        time: formatTime(time)
-      }));
-
-      sendResponse({
-        connected: state.partyActive,
-        roomId: state.roomId,
-        localTime: formatTime(currentTime),
-        remoteUsers: remoteUsers
-      });
-    });
-    return true; // Keep channel open for async response
   }
 });
 

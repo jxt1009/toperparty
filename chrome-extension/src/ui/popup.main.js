@@ -127,41 +127,100 @@ function startStatusPolling() {
   }, 1000);
 }
 
-function updateStats() {
-  // Request stats from content script
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    if (tabs[0] && tabs[0].url && tabs[0].url.includes('netflix.com')) {
-      chrome.tabs.sendMessage(tabs[0].id, { type: 'GET_PARTY_STATS' }, (response) => {
-        if (chrome.runtime.lastError || !response) return;
-        
-        // Update local time
-        if (localTimeEl) {
-          localTimeEl.textContent = response.localTime || '--:--';
-        }
-        
-        // Update sync status
-        if (syncStatusEl) {
-          syncStatusEl.textContent = response.connected ? 'In Sync' : 'Disconnected';
-          syncStatusEl.style.color = response.connected ? '#4ade80' : '#ef4444';
-        }
-        
-        // Update remote users
-        if (remoteUsersList && response.remoteUsers) {
-          if (response.remoteUsers.length === 0) {
-            remoteUsersList.innerHTML = '<div style="color: rgba(255,255,255,0.5); font-size: 12px; font-style: italic;">No other users in party</div>';
-          } else {
-            remoteUsersList.innerHTML = '<div style="font-weight: 600; font-size: 12px; margin-bottom: 8px; color: rgba(255,255,255,0.7);">Remote Users:</div>' +
-              response.remoteUsers.map(user => `
-                <div style="padding: 6px 0; border-top: 1px solid rgba(255,255,255,0.1);">
-                  <div style="font-size: 11px; opacity: 0.7;">${user.id.substring(0, 16)}...</div>
-                  <div style="font-weight: 600; color: #a78bfa; font-size: 12px;">${user.time}</div>
-                </div>
-              `).join('');
-          }
-        }
-      });
+async function updateStats() {
+  if (!status.isConnected || !status.roomId) {
+    console.log('[Popup] Not connected or no room ID');
+    return;
+  }
+
+  try {
+    // Fetch stats from signaling server
+    const response = await fetch('http://watch.toper.dev/status');
+    if (!response.ok) {
+      console.error('[Popup] Failed to fetch server status');
+      return;
     }
-  });
+
+    const serverStatus = await response.json();
+    console.log('[Popup] Server status:', serverStatus);
+
+    // Find our room
+    const room = serverStatus.rooms?.find(r => r.roomId === status.roomId);
+    if (!room) {
+      console.log('[Popup] Room not found on server');
+      if (syncStatusEl) {
+        syncStatusEl.textContent = 'Not Found';
+        syncStatusEl.style.color = '#ef4444';
+      }
+      return;
+    }
+
+    const formatTime = (seconds) => {
+      if (!seconds && seconds !== 0) return '--:--';
+      const totalSeconds = Math.floor(seconds);
+      const minutes = Math.floor(totalSeconds / 60);
+      const secs = totalSeconds % 60;
+      return `${minutes}:${secs.toString().padStart(2, '0')}`;
+    };
+
+    // Update local time (use room's currentTime as reference)
+    if (localTimeEl) {
+      localTimeEl.textContent = formatTime(room.currentTime);
+    }
+
+    // Update sync status
+    if (syncStatusEl) {
+      const isPlaying = room.isPlaying ? 'Playing' : 'Paused';
+      syncStatusEl.textContent = isPlaying;
+      syncStatusEl.style.color = room.isPlaying ? '#4ade80' : '#fbbf24';
+    }
+
+    // Update user list with individual positions
+    if (remoteUsersList) {
+      const users = room.users || [];
+      
+      if (users.length === 0) {
+        remoteUsersList.innerHTML = '<div style="color: rgba(255,255,255,0.5); font-size: 12px; font-style: italic;">No users in party</div>';
+      } else {
+        const userListHTML = users.map((user, index) => {
+          const timeDiff = Math.abs(user.currentTime - room.currentTime);
+          const isOutOfSync = timeDiff > 2; // More than 2 seconds off
+          const statusColor = user.isPlaying ? '#4ade80' : '#fbbf24';
+          const syncColor = isOutOfSync ? '#ef4444' : '#4ade80';
+          
+          return `
+            <div style="padding: 8px; border-top: 1px solid rgba(255,255,255,0.1); ${index === 0 ? 'border-top: none;' : ''}">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                <div style="font-weight: 600; font-size: 12px; color: rgba(255,255,255,0.9);">
+                  ${user.userId.substring(0, 8)}...
+                </div>
+                <div style="font-size: 10px; color: ${statusColor};">
+                  ${user.isPlaying ? '▶' : '⏸'}
+                </div>
+              </div>
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div style="font-size: 13px; font-weight: 600; color: #a78bfa;">
+                  ${formatTime(user.currentTime)}
+                </div>
+                <div style="font-size: 10px; color: ${syncColor}; font-weight: 600;">
+                  ${isOutOfSync ? `±${timeDiff.toFixed(1)}s` : '✓ synced'}
+                </div>
+              </div>
+            </div>
+          `;
+        }).join('');
+        
+        remoteUsersList.innerHTML = `
+          <div style="font-weight: 600; font-size: 12px; margin-bottom: 8px; color: rgba(255,255,255,0.7);">
+            ${users.length} user${users.length === 1 ? '' : 's'} in party
+          </div>
+          ${userListHTML}
+        `;
+      }
+    }
+  } catch (error) {
+    console.error('[Popup] Error fetching stats:', error);
+  }
 }
 
 chrome.runtime.onMessage.addListener((request) => {
