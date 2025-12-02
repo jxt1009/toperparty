@@ -22,7 +22,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     // Only reconnect to the server with the same userId
     backgroundService.stopParty(false);
     backgroundService.startParty(request.roomId).then(() => {
-      sendResponse({ success: true });
+      sendResponse({ 
+        success: true, 
+        userId: backgroundService.userId,
+        roomId: backgroundService.roomId 
+      });
     }).catch(err => {
       sendResponse({ success: false, error: err.message });
     });

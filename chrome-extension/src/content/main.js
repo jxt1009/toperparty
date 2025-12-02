@@ -78,7 +78,9 @@ function stopVideoElementMonitoring() {
       console.log('[Content Script] Sending RESTORE_PARTY message');
       chrome.runtime.sendMessage({ type: 'RESTORE_PARTY', roomId: restorationState.roomId }, (response) => {
         if (response && response.success) {
-          console.log('[Content Script] Party restoration successful - media stream and sync will be re-initialized');
+          console.log('[Content Script] Party restoration successful - setting state with userId:', response.userId);
+          // Immediately set the userId and roomId so we can handle incoming messages
+          stateManager.startParty(response.userId, response.roomId);
         } else {
           console.error('[Content Script] Party restoration failed:', response ? response.error : 'Unknown error');
         }
