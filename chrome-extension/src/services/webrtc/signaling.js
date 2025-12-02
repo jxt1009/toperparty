@@ -105,6 +105,9 @@ export function createSignalingHandlers({ getState, peerConnections, peersThatLe
       }
       if (!pc) {
         console.log('[Signaling] Creating new peer connection for', from);
+        // Clear any reconnection attempts when receiving an offer
+        clearReconnection(from);
+        peersThatLeft.delete(from);
         pc = createPeer(from);
         peerConnections.set(from, pc);
       }
