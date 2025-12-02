@@ -289,13 +289,25 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       return;
     }
     
-    console.log('[Content Script] Navigating to:', request.url);
+    console.log('[Content Script] Navigating to:', request.url, 'using SPA navigation');
     // Save state before navigating (for restoration if on /watch page)
     const currentPath = window.location.pathname;
     if (currentPath.startsWith('/watch')) {
       urlSync.saveState();
     }
-    window.location.href = request.url;
+    
+    // Use history.pushState to navigate without full page reload (Netflix SPA style)
+    try {
+      window.history.pushState({}, '', request.url);
+      
+      // Trigger popstate event to let Netflix's router handle the navigation
+      window.dispatchEvent(new PopStateEvent('popstate', { state: {} }));
+      
+      console.log('[Content Script] SPA navigation triggered');
+    } catch (e) {
+      console.error('[Content Script] Failed to navigate via pushState, falling back to full reload:', e);
+      window.location.href = request.url;
+    }
   }
 
   if (request.type === 'HANDLE_REQUEST_SYNC') {
