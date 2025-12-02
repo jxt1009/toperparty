@@ -7,6 +7,9 @@ export function createSignalingHandlers({ getState, peerConnections, peersThatLe
         console.log('[Signaling] Ignoring JOIN from self');
         return;
       }
+      
+      // First, clear any reconnection attempts - peer has explicitly rejoined
+      clearReconnection(from);
       peersThatLeft.delete(from);
       
       let pc = peerConnections.get(from);
