@@ -109,7 +109,13 @@ export class WebRTCManager {
       console.log('[WebRTCManager] Dispatching to handleLeave');
       this.signalingHandlers.handleLeave(from);
     } else {
-      console.log('[WebRTCManager] Signal not handled - type:', type, 'from:', from, 'conditions not met');
+      console.log('[WebRTCManager] Signal not handled - type:', type, 'from:', from, 'fromSelf:', from === state.userId, 'reasons:', {
+        JOIN: type === 'JOIN' ? `from=${!!from}, notSelf=${from !== state.userId}` : 'N/A',
+        OFFER: type === 'OFFER' ? `hasOffer=${!!message.offer}, from=${!!from}, notSelf=${from !== state.userId}` : 'N/A',
+        ANSWER: type === 'ANSWER' ? `hasAnswer=${!!message.answer}, from=${!!from}, notSelf=${from !== state.userId}` : 'N/A',
+        ICE: type === 'ICE_CANDIDATE' ? `hasCandidate=${!!message.candidate}, from=${!!from}, notSelf=${from !== state.userId}` : 'N/A',
+        LEAVE: type === 'LEAVE' ? `from=${!!from}` : 'N/A'
+      });
     }
   }
 
