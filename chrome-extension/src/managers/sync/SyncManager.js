@@ -85,22 +85,15 @@ export class SyncManager {
       
       this.isInitializedRef.set(false);
       
-      // Check if we just navigated from browse - if so, respect Netflix's auto-play intent
-      // but still request sync to match timestamp
+      // Check if we just navigated from browse - if so, respect Netflix's natural behavior
+      // (auto-play, resume from saved position, etc.) and skip initial sync
       const fromBrowse = sessionStorage.getItem('toperparty_from_browse');
       if (fromBrowse === 'true') {
-        console.log('[SyncManager] Just navigated from browse - will respect auto-play but sync timestamp');
+        console.log('[SyncManager] Just navigated from browse - respecting Netflix behavior, skipping initial sync');
         sessionStorage.removeItem('toperparty_from_browse');
-        // Request sync to get timestamp, but we'll only sync position not play/pause state
-        this.state.safeSendMessage({ type: 'REQUEST_SYNC', respectAutoPlay: true });
-        
-        // If no response after 2 seconds, consider ourselves initialized
-        setTimeout(() => {
-          if (!this.isInitializedRef.get()) {
-            console.log('[SyncManager] No sync response received after 2s, marking as initialized');
-            this.isInitializedRef.set(true);
-          }
-        }, 2000);
+        // Mark as initialized immediately so we start broadcasting our state
+        this.isInitializedRef.set(true);
+        console.log('[SyncManager] Marked as initialized, will now broadcast playback events');
       } else {
         // Request initial sync from other clients
         console.log('[SyncManager] Requesting initial sync from other clients');
