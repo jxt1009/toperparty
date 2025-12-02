@@ -222,8 +222,21 @@ wss.on('connection', (ws, req) => {
         broadcastToRoom(ws, roomId, text);
         removeUserFromRoom(ws);
       } else if (roomId) {
-        // For all other messages, send to room
-        broadcastToRoom(ws, roomId, text);
+        // Check if this is a targeted message (has 'to' field)
+        const targetUserId = parsed.to;
+        if (targetUserId) {
+          // Send only to the specific target user
+          const targetState = userStates.get(targetUserId);
+          if (targetState && targetState.ws && targetState.ws.readyState === targetState.ws.OPEN) {
+            targetState.ws.send(text);
+            // console.log(`Sent ${type} from ${userId} to ${targetUserId}`);
+          } else {
+            console.warn(`Cannot send ${type} to ${targetUserId} - user not found or not connected`);
+          }
+        } else {
+          // Broadcast to room for non-targeted messages
+          broadcastToRoom(ws, roomId, text);
+        }
       } else {
         // Fallback: broadcast to all (legacy)
         wss.clients.forEach((client) => {

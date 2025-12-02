@@ -43,11 +43,20 @@ export function createSignalingHandlers({ getState, peerConnections, peersThatLe
         return;
       }
       let pc = peerConnections.get(from);
-      if (pc && pc.signalingState !== 'closed') {
-        console.log('[Signaling] Closing existing peer connection');
-        try { pc.close(); } catch (e) {}
-        peerConnections.delete(from);
-        pc = null;
+      if (pc) {
+        console.log('[Signaling] Existing peer connection state:', pc.signalingState);
+        if (pc.signalingState !== 'closed' && pc.signalingState !== 'stable') {
+          console.log('[Signaling] Closing existing peer connection in state:', pc.signalingState);
+          try { pc.close(); } catch (e) {}
+          peerConnections.delete(from);
+          pc = null;
+        } else if (pc.signalingState === 'stable') {
+          // If stable, this might be a renegotiation - close and recreate
+          console.log('[Signaling] Closing stable peer connection for renegotiation');
+          try { pc.close(); } catch (e) {}
+          peerConnections.delete(from);
+          pc = null;
+        }
       }
       if (!pc) {
         console.log('[Signaling] Creating new peer connection for', from);
@@ -55,7 +64,7 @@ export function createSignalingHandlers({ getState, peerConnections, peersThatLe
         peerConnections.set(from, pc);
       }
       try {
-        console.log('[Signaling] Setting remote description');
+        console.log('[Signaling] Setting remote description, current state:', pc.signalingState);
         await pc.setRemoteDescription(new RTCSessionDescription(offer));
         const stream = getLocalStream();
         console.log('[Signaling] Local stream:', stream, 'tracks:', stream ? stream.getTracks().length : 0);
@@ -72,7 +81,8 @@ export function createSignalingHandlers({ getState, peerConnections, peersThatLe
         await pc.setLocalDescription(answer);
         sendSignal({ type: 'ANSWER', from: state.userId, to: from, answer: pc.localDescription });
       } catch (err) {
-        console.error('[Signaling] Error handling offer:', err);
+        console.error('[Signaling] Error handling offer:', err.name, err.message);
+        console.error('[Signaling] Full error:', err);
         peerConnections.delete(from);
         try { pc.close(); } catch (e) {}
       }
@@ -80,16 +90,40 @@ export function createSignalingHandlers({ getState, peerConnections, peersThatLe
     async handleAnswer(from, answer) {
       console.log('[Signaling] Handling ANSWER from', from);
       const pc = peerConnections.get(from);
-      if (pc && pc.signalingState === 'have-local-offer') {
+      if (!pc) {
+        console.warn('[Signaling] Cannot handle ANSWER - no peer connection found for', from);
+        return;
+      }
+      
+      console.log('[Signaling] Peer connection state:', {
+        signalingState: pc.signalingState,
+        connectionState: pc.connectionState,
+        iceConnectionState: pc.iceConnectionState
+      });
+      
+      if (pc.signalingState === 'have-local-offer') {
         console.log('[Signaling] Setting remote description from ANSWER');
         try {
           await pc.setRemoteDescription(new RTCSessionDescription(answer));
           console.log('[Signaling] Remote description set successfully');
         } catch (err) {
-          console.error('[Signaling] Error handling answer:', err);
+          console.error('[Signaling] Error handling answer:', err.name, err.message);
+          console.error('[Signaling] Full error:', err);
+          // If the peer connection is in a bad state, close it and remove it
+          if (err.name === 'InvalidStateError' || err.name === 'OperationError') {
+            console.log('[Signaling] Closing peer connection due to state error');
+            try { pc.close(); } catch (e) {}
+            peerConnections.delete(from);
+          }
         }
+      } else if (pc.signalingState === 'stable') {
+        console.log('[Signaling] Received ANSWER but already in stable state (connection:', pc.connectionState + ') - likely duplicate, ignoring');
+      } else if (pc.signalingState === 'have-remote-offer') {
+        console.warn('[Signaling] Received ANSWER but expecting to send one (have-remote-offer) - might be glare, ignoring');
+      } else if (pc.signalingState === 'closed') {
+        console.warn('[Signaling] Received ANSWER but peer connection is closed - ignoring');
       } else {
-        console.warn('[Signaling] Cannot handle ANSWER - pc:', !!pc, 'signalingState:', pc?.signalingState);
+        console.warn('[Signaling] Cannot handle ANSWER - unexpected state:', pc.signalingState);
       }
     },
     async handleIceCandidate(from, candidate) {
