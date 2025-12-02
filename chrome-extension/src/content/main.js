@@ -350,6 +350,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     // Request sync from other clients
     stateManager.safeSendMessage({ type: 'REQUEST_SYNC' });
   }
+
+  if (request.type === 'RECONNECTED') {
+    console.log('[Content Script] WebSocket reconnected, userId:', request.userId);
+  }
+
+  if (request.type === 'REQUEST_SYNC_AFTER_RECONNECT') {
+    // Only request sync if we're on a /watch page and party is active
+    if (window.location.pathname.startsWith('/watch') && stateManager.isActive()) {
+      console.log('[Content Script] Requesting sync after reconnection');
+      stateManager.safeSendMessage({ type: 'REQUEST_SYNC' });
+    }
+  }
 });
 
 window.addEventListener('beforeunload', () => {

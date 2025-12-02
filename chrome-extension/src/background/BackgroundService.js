@@ -240,6 +240,22 @@ export class BackgroundService {
         }));
         this.startHeartbeat();
         console.log('[BackgroundService] Rejoined room after reconnection');
+        
+        // Notify content scripts about reconnection and request sync
+        chrome.tabs.query({ url: 'https://www.netflix.com/*' }, (tabs) => {
+          tabs.forEach(tab => {
+            chrome.tabs.sendMessage(tab.id, { 
+              type: 'RECONNECTED', 
+              userId: this.userId, 
+              roomId: this.roomId 
+            }).catch(() => {});
+            
+            // Request sync after reconnection if on /watch page
+            chrome.tabs.sendMessage(tab.id, { 
+              type: 'REQUEST_SYNC_AFTER_RECONNECT' 
+            }).catch(() => {});
+          });
+        });
       };
       this.ws.onmessage = (event) => this.handleSignalingMessage(event.data);
       this.ws.onerror = (error) => {
