@@ -134,17 +134,54 @@ export class WebRTCManager {
   }
 
   clearAll() {
+    console.log('[WebRTCManager] Clearing all connections and videos');
+    
     this.peerConnections.forEach((pc) => {
       try { pc.close(); } catch (e) {}
     });
     this.peerConnections.clear();
     this.peersThatLeft.clear();
-    this.remoteVideos.forEach((v) => {
-      try { if (v.srcObject) v.srcObject = null; } catch (e) {}
-      v.remove();
+    
+    // Clean up video elements and their containers
+    this.remoteVideos.forEach((v, peerId) => {
+      try { 
+        if (v.srcObject) {
+          v.srcObject.getTracks().forEach(track => track.stop());
+          v.srcObject = null;
+        }
+      } catch (e) {}
+      
+      // Remove the container (which includes the video)
+      const container = document.getElementById('toperparty-container-' + peerId);
+      if (container) {
+        console.log('[WebRTCManager] Removing container for peer:', peerId);
+        container.remove();
+      } else if (v.parentElement) {
+        // Fallback: remove parent if it exists
+        v.parentElement.remove();
+      } else {
+        // Last resort: just remove the video
+        v.remove();
+      }
     });
+    
     this.remoteVideos.clear();
     this.remoteStreams.clear();
+    
+    // Extra cleanup: remove any orphaned toperparty elements
+    document.querySelectorAll('[id^="toperparty-container-"]').forEach(el => {
+      console.log('[WebRTCManager] Removing orphaned container:', el.id);
+      el.remove();
+    });
+    document.querySelectorAll('[id^="toperparty-remote-"]').forEach(el => {
+      console.log('[WebRTCManager] Removing orphaned video:', el.id);
+      el.remove();
+    });
+    document.querySelectorAll('[id^="toperparty-overlay-"]').forEach(el => {
+      console.log('[WebRTCManager] Removing orphaned overlay:', el.id);
+      el.remove();
+    });
+    
     if (this.localStream) {
       this.localStream.getTracks().forEach(track => track.stop());
       this.localStream = null;

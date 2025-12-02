@@ -6,6 +6,31 @@ import { UIManager } from '../ui/UIManager.js';
 import { URLSync } from '../managers/url/URLSync.js';
 
 console.log('[Content Script] Initializing managers...');
+
+// Clean up any stale ToperParty elements from previous extension loads
+console.log('[Content Script] Cleaning up stale elements from previous extension instance...');
+const staleContainers = document.querySelectorAll('[id^="toperparty-container-"]');
+const staleVideos = document.querySelectorAll('[id^="toperparty-remote-"]');
+const staleOverlays = document.querySelectorAll('[id^="toperparty-overlay-"]');
+const staleLocalVideo = document.getElementById('toperparty-local-preview');
+
+staleContainers.forEach(el => {
+  console.log('[Content Script] Removing stale container:', el.id);
+  el.remove();
+});
+staleVideos.forEach(el => {
+  console.log('[Content Script] Removing stale video:', el.id);
+  el.remove();
+});
+staleOverlays.forEach(el => {
+  console.log('[Content Script] Removing stale overlay:', el.id);
+  el.remove();
+});
+if (staleLocalVideo) {
+  console.log('[Content Script] Removing stale local video');
+  staleLocalVideo.remove();
+}
+
 const stateManager = new StateManager();
 const uiManager = new UIManager();
 const netflixController = new NetflixController();
