@@ -1,4 +1,20 @@
 export function createRemoteVideoManager(remoteVideos) {
+  function createLoadingSpinner() {
+    // Create a more visually appealing spinner using CSS
+    const spinner = document.createElement('div');
+    spinner.className = 'toperparty-spinner';
+    spinner.style.cssText = `
+      width: 40px;
+      height: 40px;
+      border: 4px solid rgba(255, 255, 255, 0.3);
+      border-top: 4px solid #00aaff;
+      border-radius: 50%;
+      animation: toperparty-spin 1s linear infinite;
+      margin-bottom: 12px;
+    `;
+    return spinner;
+  }
+  
   function makeDraggable(element) {
     let isDragging = false;
     let currentX;
@@ -72,18 +88,28 @@ export function createRemoteVideoManager(remoteVideos) {
       return;
     }
     
-    // Remove any stale references
-    remove(peerId);
+    // Check if a placeholder container already exists
+    let container = document.getElementById('toperparty-container-' + peerId);
     
-    // Create container for video + overlay
-    const container = document.createElement('div');
-    container.id = 'toperparty-container-' + peerId;
-    container.style.position = 'fixed';
-    container.style.bottom = '20px';
-    container.style.right = (20 + (remoteVideos.size * 180)) + 'px';
-    container.style.width = '240px';
-    container.style.height = '160px';
-    container.style.zIndex = 10001;
+    if (!container) {
+      // No placeholder exists, create container from scratch
+      // Remove any stale references
+      remove(peerId);
+      
+      container = document.createElement('div');
+      container.id = 'toperparty-container-' + peerId;
+      container.style.position = 'fixed';
+      container.style.bottom = '20px';
+      container.style.right = (20 + (remoteVideos.size * 180)) + 'px';
+      container.style.width = '240px';
+      container.style.height = '160px';
+      container.style.zIndex = 10001;
+      container.style.border = '2px solid #00aaff';
+      container.style.borderRadius = '4px';
+      container.style.backgroundColor = '#000';
+    } else {
+      console.log('[RemoteVideoManager] Using existing placeholder container for peer:', peerId);
+    }
     
     const v = document.createElement('video');
     v.id = 'toperparty-remote-' + peerId;
@@ -96,43 +122,63 @@ export function createRemoteVideoManager(remoteVideos) {
     v.style.borderRadius = '4px';
     v.style.backgroundColor = '#000';
     
-    // Create loading overlay
-    const overlay = document.createElement('div');
-    overlay.id = 'toperparty-overlay-' + peerId;
-    overlay.style.position = 'absolute';
-    overlay.style.top = '0';
-    overlay.style.left = '0';
-    overlay.style.width = '100%';
-    overlay.style.height = '100%';
-    overlay.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-    overlay.style.display = 'flex';
-    overlay.style.alignItems = 'center';
-    overlay.style.justifyContent = 'center';
-    overlay.style.color = '#fff';
-    overlay.style.fontSize = '14px';
-    overlay.style.fontFamily = 'Arial, sans-serif';
-    overlay.style.borderRadius = '4px';
-    overlay.style.pointerEvents = 'none';
-    overlay.innerHTML = '<div style="text-align: center;"><div style="margin-bottom: 8px;">●</div><div>Connecting...</div></div>';
+    // Get or create overlay
+    let overlay = document.getElementById('toperparty-overlay-' + peerId);
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'toperparty-overlay-' + peerId;
+      overlay.style.position = 'absolute';
+      overlay.style.top = '0';
+      overlay.style.left = '0';
+      overlay.style.width = '100%';
+      overlay.style.height = '100%';
+      overlay.style.backgroundColor = 'rgba(0, 0, 0, 0.85)';
+      overlay.style.display = 'flex';
+      overlay.style.flexDirection = 'column';
+      overlay.style.alignItems = 'center';
+      overlay.style.justifyContent = 'center';
+      overlay.style.color = '#fff';
+      overlay.style.fontSize = '14px';
+      overlay.style.fontFamily = 'Arial, sans-serif';
+      overlay.style.borderRadius = '4px';
+      overlay.style.pointerEvents = 'none';
+      
+      const spinner = createLoadingSpinner();
+      const text = document.createElement('div');
+      text.textContent = 'Connecting...';
+      text.style.fontWeight = '500';
+      
+      overlay.appendChild(spinner);
+      overlay.appendChild(text);
+    }
     
-    // Add pulsing animation to the dot
-    const style = document.createElement('style');
-    style.textContent = `
-      @keyframes toperparty-pulse {
-        0%, 100% { opacity: 0.3; }
-        50% { opacity: 1; }
-      }
-      #toperparty-overlay-${peerId} > div > div:first-child {
-        animation: toperparty-pulse 1.5s ease-in-out infinite;
-        font-size: 24px;
-      }
-    `;
-    document.head.appendChild(style);
+    // Add spinner animation styles (only once)
+    if (!document.getElementById('toperparty-spinner-styles')) {
+      const style = document.createElement('style');
+      style.id = 'toperparty-spinner-styles';
+      style.textContent = `
+        @keyframes toperparty-spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+        @keyframes toperparty-pulse {
+          0%, 100% { opacity: 0.3; }
+          50% { opacity: 1; }
+        }
+      `;
+      document.head.appendChild(style);
+    }
     
     container.appendChild(v);
-    container.appendChild(overlay);
-    document.body.appendChild(container);
-    console.log('[RemoteVideoManager] Created video container with loading overlay:', container.id);
+    if (!overlay.parentElement) {
+      container.appendChild(overlay);
+    }
+    if (!container.parentElement) {
+      document.body.appendChild(container);
+      // Make container draggable if newly created
+      makeDraggable(container);
+    }
+    console.log('[RemoteVideoManager] Added video to container:', container.id);
     
     // Verify stream has active tracks
     const activeTracks = stream.getTracks().filter(t => t.readyState === 'live');
@@ -147,9 +193,6 @@ export function createRemoteVideoManager(remoteVideos) {
     }
     
     remoteVideos.set(peerId, v);
-    
-    // Make container draggable (not the video itself)
-    makeDraggable(container);
     
     // Handle video playback with better error handling
     const playVideo = () => {
@@ -249,7 +292,14 @@ export function createRemoteVideoManager(remoteVideos) {
     // Check if overlay already exists
     let overlay = document.getElementById('toperparty-overlay-' + peerId);
     if (overlay) {
-      overlay.innerHTML = '<div style="text-align: center;"><div style="margin-bottom: 8px;">●</div><div>Reconnecting...</div></div>';
+      // Update existing overlay content
+      overlay.innerHTML = '';
+      const spinner = createLoadingSpinner();
+      const text = document.createElement('div');
+      text.textContent = 'Reconnecting...';
+      text.style.fontWeight = '500';
+      overlay.appendChild(spinner);
+      overlay.appendChild(text);
       overlay.style.display = 'flex';
       return;
     }
@@ -268,8 +318,9 @@ export function createRemoteVideoManager(remoteVideos) {
     overlay.style.left = '0';
     overlay.style.width = '100%';
     overlay.style.height = '100%';
-    overlay.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+    overlay.style.backgroundColor = 'rgba(0, 0, 0, 0.85)';
     overlay.style.display = 'flex';
+    overlay.style.flexDirection = 'column';
     overlay.style.alignItems = 'center';
     overlay.style.justifyContent = 'center';
     overlay.style.color = '#fff';
@@ -277,8 +328,14 @@ export function createRemoteVideoManager(remoteVideos) {
     overlay.style.fontFamily = 'Arial, sans-serif';
     overlay.style.borderRadius = '4px';
     overlay.style.pointerEvents = 'none';
-    overlay.innerHTML = '<div style="text-align: center;"><div style="margin-bottom: 8px;">●</div><div>Reconnecting...</div></div>';
     
+    const spinner = createLoadingSpinner();
+    const text = document.createElement('div');
+    text.textContent = 'Reconnecting...';
+    text.style.fontWeight = '500';
+    
+    overlay.appendChild(spinner);
+    overlay.appendChild(text);
     container.appendChild(overlay);
   }
   
@@ -290,5 +347,63 @@ export function createRemoteVideoManager(remoteVideos) {
     }
   }
   
-  return { add, remove, showReconnecting, hideOverlay };
+  function showPlaceholder(peerId) {
+    console.log('[RemoteVideoManager] Showing placeholder for peer:', peerId);
+    
+    // Check if container already exists
+    let container = document.getElementById('toperparty-container-' + peerId);
+    if (container) {
+      console.log('[RemoteVideoManager] Placeholder already exists for peer:', peerId);
+      return;
+    }
+    
+    // Create container immediately
+    container = document.createElement('div');
+    container.id = 'toperparty-container-' + peerId;
+    container.style.position = 'fixed';
+    container.style.bottom = '20px';
+    container.style.right = (20 + (remoteVideos.size * 180)) + 'px';
+    container.style.width = '240px';
+    container.style.height = '160px';
+    container.style.zIndex = 10001;
+    container.style.border = '2px solid #00aaff';
+    container.style.borderRadius = '4px';
+    container.style.backgroundColor = '#000';
+    
+    // Create loading overlay
+    const overlay = document.createElement('div');
+    overlay.id = 'toperparty-overlay-' + peerId;
+    overlay.style.position = 'absolute';
+    overlay.style.top = '0';
+    overlay.style.left = '0';
+    overlay.style.width = '100%';
+    overlay.style.height = '100%';
+    overlay.style.backgroundColor = 'rgba(0, 0, 0, 0.85)';
+    overlay.style.display = 'flex';
+    overlay.style.flexDirection = 'column';
+    overlay.style.alignItems = 'center';
+    overlay.style.justifyContent = 'center';
+    overlay.style.color = '#fff';
+    overlay.style.fontSize = '14px';
+    overlay.style.fontFamily = 'Arial, sans-serif';
+    overlay.style.borderRadius = '4px';
+    overlay.style.pointerEvents = 'none';
+    
+    const spinner = createLoadingSpinner();
+    const text = document.createElement('div');
+    text.textContent = 'Connecting...';
+    text.style.fontWeight = '500';
+    
+    overlay.appendChild(spinner);
+    overlay.appendChild(text);
+    container.appendChild(overlay);
+    document.body.appendChild(container);
+    
+    // Make container draggable immediately
+    makeDraggable(container);
+    
+    console.log('[RemoteVideoManager] Created placeholder container:', container.id);
+  }
+  
+  return { add, remove, showReconnecting, hideOverlay, showPlaceholder };
 }

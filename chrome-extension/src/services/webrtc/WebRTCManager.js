@@ -32,7 +32,8 @@ export class WebRTCManager {
       },
       peersThatLeft: this.peersThatLeft,
       showReconnecting: videoManager.showReconnecting,
-      hideOverlay: videoManager.hideOverlay
+      hideOverlay: videoManager.hideOverlay,
+      showPlaceholder: videoManager.showPlaceholder
     });
 
     // Now create the actual reconnection manager with createPeer available

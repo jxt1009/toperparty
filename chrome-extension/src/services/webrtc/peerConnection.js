@@ -1,5 +1,8 @@
-export function createPeerConnectionFactory({ stateManager, sendSignal, remoteStreams, remoteVideos, addRemoteVideo, attemptReconnection, clearReconnection, removeRemoteVideo, peersThatLeft, showReconnecting, hideOverlay }) {
+export function createPeerConnectionFactory({ stateManager, sendSignal, remoteStreams, remoteVideos, addRemoteVideo, attemptReconnection, clearReconnection, removeRemoteVideo, peersThatLeft, showReconnecting, hideOverlay, showPlaceholder }) {
   return function createPeerConnection(peerId) {
+    // Show placeholder immediately when peer connection is created
+    showPlaceholder(peerId);
+    
     const state = stateManager.getState();
     const pc = new RTCPeerConnection({
       iceServers: [
