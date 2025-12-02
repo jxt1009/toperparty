@@ -128,13 +128,13 @@ function removeUserFromRoom(ws) {
           if (remainingClients.length > 0) {
             const newHostUserRoom = userRooms.get(remainingClients[0]);
             if (newHostUserRoom) {
-              state.hostUserId = newHostUserRoom.userId;
-              console.log(`New host for room ${roomId}: ${state.hostUserId}`);
+              roomData.hostUserId = newHostUserRoom.userId;
+              console.log(`New host for room ${roomId}: ${roomData.hostUserId}`);
               
               // Notify room of new host
               broadcastToRoom(null, roomId, JSON.stringify({
                 type: 'HOST_CHANGED',
-                newHostUserId: state.hostUserId
+                newHostUserId: roomData.hostUserId
               }));
             }
           }
