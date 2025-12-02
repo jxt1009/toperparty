@@ -1,9 +1,10 @@
 export class URLSync {
-  constructor(stateManager, onWatchPageChange) {
+  constructor(stateManager, onWatchPageChange, onNavigateToWatch) {
     this.stateManager = stateManager;
     this.urlMonitorInterval = null;
     this.lastUrl = null;
     this.onWatchPageChange = onWatchPageChange || (() => {});
+    this.onNavigateToWatch = onNavigateToWatch || (() => {});
   }
   
   start() { 
@@ -27,6 +28,7 @@ export class URLSync {
         const wasOnWatch = lastPath.startsWith('/watch');
         const nowOnWatch = currentPath.startsWith('/watch');
         const watchPageChanged = wasOnWatch && nowOnWatch && lastPath !== currentPath;
+        const navigatedToWatch = !wasOnWatch && nowOnWatch;
         const leftWatch = wasOnWatch && !nowOnWatch;
         
         this.lastUrl = currentUrl;
@@ -35,6 +37,17 @@ export class URLSync {
         if (watchPageChanged) {
           console.log('[URLSync] Watch page changed - triggering sync reinitialization');
           this.onWatchPageChange();
+        }
+        
+        // If we navigated TO a /watch page from elsewhere, initialize sync
+        if (navigatedToWatch) {
+          console.log('[URLSync] Navigated to /watch page - triggering sync initialization');
+          try {
+            this.onNavigateToWatch();
+            console.log('[URLSync] Sync initialization callback completed');
+          } catch (err) {
+            console.error('[URLSync] Error calling sync initialization callback:', err);
+          }
         }
         
         const state = this.stateManager.getState();

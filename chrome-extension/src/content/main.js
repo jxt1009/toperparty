@@ -15,13 +15,35 @@ const webrtcManager = new WebRTCManager(stateManager, uiManager);
 // Callback when we navigate to a different /watch page
 const handleWatchPageChange = () => {
   console.log('[Content Script] Watch page changed - reinitializing sync manager');
-  syncManager.teardown();
-  syncManager.setup().catch(err => {
-    console.error('[Content Script] Failed to reinitialize sync manager:', err);
-  });
+  const state = stateManager.getState();
+  if (state.partyActive) {
+    console.log('[Content Script] Party is active, reinitializing sync manager');
+    syncManager.teardown();
+    syncManager.setup().catch(err => {
+      console.error('[Content Script] Failed to reinitialize sync manager:', err);
+    });
+  } else {
+    console.log('[Content Script] Party not active, skipping sync manager reinitialization');
+  }
 };
 
-const urlSync = new URLSync(stateManager, handleWatchPageChange);
+// Also initialize sync manager when navigating TO a watch page (not just between watch pages)
+const handleNavigationToWatch = () => {
+  console.log('[Content Script] Navigated to /watch page');
+  const state = stateManager.getState();
+  console.log('[Content Script] Current party state:', state);
+  if (state.partyActive) {
+    console.log('[Content Script] Party is active, initializing sync manager');
+    syncManager.teardown();
+    syncManager.setup().catch(err => {
+      console.error('[Content Script] Failed to initialize sync manager:', err);
+    });
+  } else {
+    console.log('[Content Script] Party not active, skipping sync manager initialization');
+  }
+};
+
+const urlSync = new URLSync(stateManager, handleWatchPageChange, handleNavigationToWatch);
 console.log('[Content Script] Managers initialized');
 
 let localStream = null;

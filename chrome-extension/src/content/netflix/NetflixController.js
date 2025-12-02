@@ -26,5 +26,14 @@ export class NetflixController {
   isPaused() { return this._sendCommand('isPaused'); }
   setVolume(level) { return this._sendCommand('setVolume', [level]); }
   getVolume() { return this._sendCommand('getVolume'); }
-  getVideoElement() { return document.querySelector('video'); }
+  getVideoElement() { 
+    // Find Netflix video element, excluding ToperParty videos
+    const videos = document.querySelectorAll('video');
+    for (const video of videos) {
+      if (!video.id || !video.id.startsWith('toperparty-')) {
+        return video;
+      }
+    }
+    return null;
+  }
 }

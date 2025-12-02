@@ -41,7 +41,13 @@ export function attachPlaybackListeners({ video, state, isInitializedRef, lock, 
   video.addEventListener('play', handlePlay);
   video.addEventListener('pause', handlePause);
   video.addEventListener('seeked', handleSeeked);
-  console.log('[EventListeners] Event listeners attached to video element');
+  console.log('[EventListeners] Event listeners attached to video element:', video);
+  console.log('[EventListeners] Video element details - paused:', video.paused, 'currentTime:', video.currentTime, 'src:', video.currentSrc);
+
+  // Test if events are firing at all
+  const testHandler = () => console.log('[EventListeners] TEST - Video element event fired!');
+  video.addEventListener('play', testHandler, { once: true });
+  video.addEventListener('pause', testHandler, { once: true });
 
   return { video, handlePlay, handlePause, handleSeeked };
 }
